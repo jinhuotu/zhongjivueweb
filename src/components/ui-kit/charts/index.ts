@@ -1,0 +1,6 @@
+export { default as TrendArea } from './TrendArea.vue'
+export { default as TrendLine } from './TrendLine.vue'
+export { default as GroupBar } from './GroupBar.vue'
+export { default as ComboBarLine } from './ComboBarLine.vue'
+export { default as DonutChart } from './DonutChart.vue'
+export { default as GaugeRadial } from './GaugeRadial.vue'

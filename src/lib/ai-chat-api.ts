@@ -1,0 +1,200 @@
+import { apiRequest, getApiBaseUrl } from './api';
+import { getAccessToken } from './auth';
+
+export type ChatMode = 'fast' | 'deep';
+
+export type ChatSessionItem = {
+  id: string;
+  title: string;
+  titleAuto: boolean;
+  mode: ChatMode | string;
+  summary?: string | null;
+  /** 会话最近一次勾选的知识库，打开历史时用于恢复勾选 */
+  knowledgeBaseIds?: string[];
+  messageCount: number;
+  lastMessageAt: number;
+  createdAt: number;
+  updatedAt: number;
+  messages?: ChatSessionMessage[];
+};
+
+export type ChatSessionMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'system' | string;
+  content: string;
+  mode?: string | null;
+  refs?: {
+    content: string;
+    score: number;
+    doc_id?: string;
+    kb_id?: string;
+    kbId?: string;
+  }[];
+  knowledgeBaseIds?: string[];
+  useKnowledge?: boolean;
+  createdAt: number;
+};
+
+function requireToken(): string {
+  const token = getAccessToken();
+  if (!token) throw new Error('请先登录后再使用智能问答');
+  return token;
+}
+
+export async function listChatSessions(): Promise<ChatSessionItem[]> {
+  const data = await apiRequest<{ items: ChatSessionItem[] }>('/api/v1/ai/sessions', {
+    token: requireToken(),
+  });
+  return data.items || [];
+}
+
+export async function createChatSession(input?: {
+  title?: string;
+  mode?: ChatMode;
+}): Promise<ChatSessionItem> {
+  const data = await apiRequest<{ item: ChatSessionItem }>('/api/v1/ai/sessions', {
+    method: 'POST',
+    token: requireToken(),
+    body: input || {},
+  });
+  return data.item;
+}
+
+export async function getChatSession(sessionId: string): Promise<ChatSessionItem> {
+  const data = await apiRequest<{ item: ChatSessionItem }>(
+    `/api/v1/ai/sessions/${encodeURIComponent(sessionId)}`,
+    { token: requireToken() }
+  );
+  return data.item;
+}
+
+export async function updateChatSession(
+  sessionId: string,
+  input: { title?: string; mode?: ChatMode }
+): Promise<ChatSessionItem> {
+  const data = await apiRequest<{ item: ChatSessionItem }>(
+    `/api/v1/ai/sessions/${encodeURIComponent(sessionId)}`,
+    { method: 'PATCH', token: requireToken(), body: input }
+  );
+  return data.item;
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  await apiRequest(`/api/v1/ai/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    token: requireToken(),
+  });
+}
+
+export async function summarizeChatSessionTitle(sessionId: string): Promise<ChatSessionItem> {
+  const data = await apiRequest<{ item: ChatSessionItem }>(
+    `/api/v1/ai/sessions/${encodeURIComponent(sessionId)}/summarize-title`,
+    { method: 'POST', token: requireToken() }
+  );
+  return data.item;
+}
+
+export async function fetchRelatedQuestions(input: {
+  question: string;
+  answer: string;
+}): Promise<string[]> {
+  const data = await apiRequest<{ questions: string[] }>('/api/v1/ai/chat/related', {
+    method: 'POST',
+    token: requireToken(),
+    body: input,
+  });
+  return data.questions || [];
+}
+
+export type StreamHandlers = {
+  onRefs?: (chunks: unknown[]) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (payload: { ok?: boolean; title?: string; sessionId?: string }) => void;
+  onError?: (msg: string) => void;
+};
+
+/** 直连后端 SSE：/api/v1/ai/chat（服务端 Redis 窗口为上下文权威源，只传本轮 content） */
+export async function streamChat(
+  input: {
+    content: string;
+    mode: ChatMode;
+    sessionId: string;
+    /** @deprecated 以 knowledgeBaseIds 为准；未选 = 不检索 */
+    useKnowledge?: boolean;
+    /** 选中的知识库 publicId；空数组 = 不检索 */
+    knowledgeBaseIds?: string[];
+  },
+  handlers: StreamHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const token = requireToken();
+  const knowledgeBaseIds = (input.knowledgeBaseIds || []).filter(Boolean);
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/ai/chat`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      content: input.content,
+      mode: input.mode,
+      sessionId: input.sessionId,
+      knowledgeBaseIds,
+      useKnowledge: knowledgeBaseIds.length > 0,
+    }),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    let msg = `服务异常 ${res.status}`;
+    try {
+      const j = await res.json();
+      msg = j.msg || msg;
+    } catch {
+      // ignore
+    }
+    throw new Error(msg);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // 兼容 \n\n 与 \r\n\r\n 分帧
+    buffer = buffer.replace(/\r\n/g, '\n');
+
+    let idx: number;
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const lines = block.split('\n');
+      let event = 'message';
+      const dataParts: string[] = [];
+      for (const raw of lines) {
+        const ln = raw.replace(/\r$/, '');
+        if (ln.startsWith('event:')) {
+          event = ln.slice(6).trim();
+        } else if (ln.startsWith('data:')) {
+          // 兼容 "data: {...}" 与 "data:{...}"
+          dataParts.push(ln.slice(5).replace(/^\s/, ''));
+        }
+      }
+      const data = dataParts.join('\n');
+      if (!data || data.startsWith(':')) continue;
+      try {
+        const payload = JSON.parse(data);
+        if (event === 'refs') handlers.onRefs?.(payload.chunks || []);
+        else if (event === 'delta') handlers.onDelta?.(String(payload.text ?? ''));
+        else if (event === 'done') handlers.onDone?.(payload);
+        else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));
+      } catch {
+        // ignore malformed SSE JSON chunks
+      }
+    }
+  }
+}
