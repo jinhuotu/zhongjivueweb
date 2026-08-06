@@ -48,7 +48,7 @@ function onConfirm() {
     <template #footer>
       <button
         type="button"
-        class="h-8 rounded-md border border-border px-3 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        class="kb-btn-secondary"
         :disabled="loading"
         @click="onCancel"
       >
@@ -56,13 +56,8 @@ function onConfirm() {
       </button>
       <button
         type="button"
+        class="kb-btn-primary"
         :disabled="loading"
-        :class="[
-          'h-8 rounded-md px-3 text-xs font-medium text-background disabled:opacity-60',
-          destructive === false
-            ? 'bg-molybdenum hover:opacity-90'
-            : 'bg-iron hover:opacity-90',
-        ]"
         @click="onConfirm"
       >
         {{ loading ? '处理中…' : confirmLabel || '确认' }}

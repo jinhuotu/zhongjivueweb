@@ -38,10 +38,14 @@ function friendlyMessage(status: number, msg?: string): string {
   if (status === 403) {
     return '没有权限执行此操作'
   }
-  if (status === 0 || status >= 500) {
-    return msg || '服务暂时不可用，请稍后重试'
+  // 优先展示后端具体错误（如 MCP stdio 失败原因）
+  if (msg && msg.trim()) {
+    return msg.trim()
   }
-  return msg || '请求失败'
+  if (status === 0 || status >= 500) {
+    return '服务暂时不可用，请稍后重试'
+  }
+  return '请求失败'
 }
 
 export async function apiRequest<T>(

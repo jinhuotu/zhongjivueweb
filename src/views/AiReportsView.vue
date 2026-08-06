@@ -322,7 +322,7 @@ function exportReport() {
                 'flex items-center gap-1.5 px-4 py-1.5 text-xs rounded font-semibold',
                 generating
                   ? 'bg-iron/20 text-iron border border-iron/40'
-                  : 'bg-iron text-bg-base hover:bg-iron/90',
+                  : 'bg-iron text-white hover:bg-iron/90',
               ]"
               @click="generate()"
             >

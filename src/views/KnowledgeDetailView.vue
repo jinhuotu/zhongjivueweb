@@ -918,7 +918,7 @@ async function openDocPreview(doc: KbItem) {
           <button
             type="button"
             :disabled="Boolean(deletingId)"
-            class="h-8 px-3 text-[12px] rounded-md bg-iron text-[#0b0f14] hover:bg-[#ff7d4e] inline-flex items-center gap-1.5"
+            class="h-8 px-3 text-[12px] rounded-md bg-iron text-white hover:brightness-110 inline-flex items-center gap-1.5"
             @click="confirmDeleteDoc()"
           >
             <template v-if="deletingId">
@@ -1087,37 +1087,21 @@ async function openDocPreview(doc: KbItem) {
   }
 }
 :deep(.kb-input) {
-  background: rgba(11, 15, 20, 0.6);
-  border: 1px solid var(--color-border-hairline, #2a3441);
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
-  color: var(--color-text-primary, #e6edf3);
+  color: var(--text-primary);
   font-size: 12px;
   padding: 8px 10px;
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+:deep(.kb-input::placeholder) {
+  color: var(--text-muted);
+}
 :deep(.kb-input:focus) {
   outline: none;
-  border-color: var(--color-molybdenum, #4a9eff);
-  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.12);
-}
-:deep(.kb-btn-primary) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  font-size: 12px;
-  border-radius: 6px;
-  background: var(--color-iron, #ff6b35);
-  color: #0b0f14;
-  font-weight: 500;
-  transition: background 200ms cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-:deep(.kb-btn-primary:hover) {
-  background: #ff7d4e;
-}
-:deep(.kb-btn-primary:disabled) {
-  opacity: 0.55;
-  cursor: not-allowed;
+  border-color: var(--accent-molybdenum);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-molybdenum) 18%, transparent);
 }
 </style>

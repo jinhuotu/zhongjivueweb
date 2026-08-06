@@ -5,6 +5,7 @@ import {
   Search,
   Bell,
   Sun,
+  Moon,
   CircleHelp,
   ChevronDown,
   CircleDot,
@@ -13,9 +14,11 @@ import {
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobile-menu'
+import { useThemeStore } from '@/stores/theme'
 
 const auth = useAuthStore()
 const mobileMenu = useMobileMenuStore()
+const theme = useThemeStore()
 const router = useRouter()
 
 const now = ref('--:--:--')
@@ -87,9 +90,14 @@ async function onLogout() {
 
     <div class="ml-auto flex items-center gap-1">
       <button
+        type="button"
         class="hidden h-8 items-center gap-1.5 rounded-md px-2.5 text-xs text-muted-foreground transition hover:bg-accent hover:text-foreground md:flex"
+        :title="theme.isDark ? '切换浅色主题' : '切换深色主题'"
+        :aria-label="theme.isDark ? '切换浅色主题' : '切换深色主题'"
+        @click="theme.toggle()"
       >
-        <Sun class="size-3.5" />
+        <Sun v-if="theme.isDark" class="size-3.5" />
+        <Moon v-else class="size-3.5" />
         <span>主题</span>
       </button>
       <button
@@ -105,7 +113,7 @@ async function onLogout() {
       </button>
       <div class="ml-2 flex items-center gap-2 border-l border-border pl-2">
         <div
-          class="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-molybdenum to-coolant text-[11px] font-semibold text-background"
+          class="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-molybdenum to-coolant text-[11px] font-semibold text-white"
         >
           六院
         </div>

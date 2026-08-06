@@ -16,6 +16,8 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/ai-chat': () => import('@/views/AiChatView.vue'),
   '/ai-reports': () => import('@/views/AiReportsView.vue'),
   '/model-manage': () => import('@/views/ModelManageView.vue'),
+  '/prompt-manage': () => import('@/views/PromptManageView.vue'),
+  '/mcp-manage': () => import('@/views/McpManageView.vue'),
   '/knowledge': () => import('@/views/KnowledgeListView.vue'),
   '/data-collect': () => import('@/views/DataCollectView.vue'),
   '/data-governance': () => import('@/views/DataGovernanceView.vue'),

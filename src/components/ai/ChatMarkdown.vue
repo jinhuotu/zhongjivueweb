@@ -7,7 +7,21 @@ const props = defineProps<{
   streaming?: boolean
 }>()
 
-const html = computed(() => renderMarkdown(props.content))
+/** 兜底剥离模型误输出的 DSML/工具调用标记（含全角 ｜｜ 变体） */
+function stripToolMarkup(text: string): string {
+  if (!text) return ''
+  let out = text.replace(/\uFF5C/g, '|')
+  out = out.replace(/<\|+\s*DSML\s*\|+/gi, '<|DSML|')
+  out = out.replace(/<\/\|+\s*DSML\s*\|+/gi, '</|DSML|')
+  out = out.replace(/<\|DSML\|tool_calls\s*>[\s\S]*?<\/\|DSML\|tool_calls\s*>/gi, '')
+  out = out.replace(/<\|DSML\|[^>]*>[\s\S]*?(?:<\/\|DSML\|[^>]*>|$)/gi, '')
+  out = out.replace(/<\|DSML\|[^>]*>/gi, '')
+  out = out.replace(/<\/\|DSML\|[^>]*>/gi, '')
+  out = out.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+  return out.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+const html = computed(() => renderMarkdown(stripToolMarkup(props.content || '')))
 </script>
 
 <template>
@@ -23,47 +37,47 @@ const html = computed(() => renderMarkdown(props.content))
 <style scoped>
 .chat-md :deep(.md-p) {
   margin: 0.45em 0;
-  color: var(--color-text-primary, #e6edf3);
+  color: var(--text-primary);
 }
 .chat-md :deep(.md-p:first-child) {
   margin-top: 0;
 }
 .chat-md :deep(.md-strong) {
-  color: #f0f6fc;
+  color: var(--text-primary);
   font-weight: 600;
 }
 .chat-md :deep(.md-em) {
   font-style: italic;
-  color: var(--color-text-secondary, #9aa7b5);
+  color: var(--text-secondary);
 }
 .chat-md :deep(.md-code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
   padding: 0.1em 0.35em;
   border-radius: 4px;
-  background: rgba(74, 158, 255, 0.12);
-  color: #9ecbff;
-  border: 1px solid rgba(74, 158, 255, 0.22);
+  background: color-mix(in srgb, var(--accent-molybdenum) 12%, transparent);
+  color: var(--accent-molybdenum);
+  border: 1px solid color-mix(in srgb, var(--accent-molybdenum) 22%, transparent);
 }
 .chat-md :deep(.md-pre) {
   margin: 0.65em 0;
   padding: 0.75rem 0.9rem;
   border-radius: 8px;
-  background: rgba(11, 15, 20, 0.85);
-  border: 1px solid var(--color-border-hairline, #2a3441);
+  background: color-mix(in srgb, var(--bg-base) 70%, var(--foreground) 8%);
+  border: 1px solid var(--hairline);
   overflow-x: auto;
   font-size: 11.5px;
   line-height: 1.55;
 }
 .chat-md :deep(.md-pre code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #c9d4e0;
+  color: var(--text-primary);
 }
 .chat-md :deep(.md-h1),
 .chat-md :deep(.md-h2),
 .chat-md :deep(.md-h3),
 .chat-md :deep(.md-h4) {
-  color: #f0f6fc;
+  color: var(--text-primary);
   font-weight: 600;
   margin: 0.85em 0 0.4em;
   line-height: 1.35;
@@ -74,7 +88,7 @@ const html = computed(() => renderMarkdown(props.content))
 .chat-md :deep(.md-h2) {
   font-size: 1.08em;
   padding-left: 0.5rem;
-  border-left: 2px solid var(--color-iron, #ff6b35);
+  border-left: 2px solid var(--accent-iron);
 }
 .chat-md :deep(.md-h3),
 .chat-md :deep(.md-h4) {
@@ -87,7 +101,7 @@ const html = computed(() => renderMarkdown(props.content))
 }
 .chat-md :deep(.md-li) {
   margin: 0.2em 0;
-  color: var(--color-text-primary, #e6edf3);
+  color: var(--text-primary);
 }
 .chat-md :deep(.md-ul) {
   list-style: disc;
@@ -98,22 +112,22 @@ const html = computed(() => renderMarkdown(props.content))
 .chat-md :deep(.md-quote) {
   margin: 0.6em 0;
   padding: 0.55rem 0.75rem;
-  border-left: 3px solid rgba(255, 107, 53, 0.65);
-  background: rgba(255, 107, 53, 0.06);
+  border-left: 3px solid color-mix(in srgb, var(--accent-iron) 65%, transparent);
+  background: color-mix(in srgb, var(--accent-iron) 6%, transparent);
   border-radius: 0 6px 6px 0;
-  color: var(--color-text-secondary, #9aa7b5);
+  color: var(--text-secondary);
 }
 .chat-md :deep(.md-hr) {
   margin: 0.85em 0;
   border: 0;
-  border-top: 1px solid var(--color-border-hairline, #2a3441);
+  border-top: 1px solid var(--hairline);
 }
 .chat-md :deep(.md-table-wrap) {
   margin: 0.7em 0;
   overflow-x: auto;
   border-radius: 8px;
-  border: 1px solid var(--color-border-hairline, #2a3441);
-  background: rgba(11, 15, 20, 0.45);
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
 }
 .chat-md :deep(.md-table) {
   width: 100%;
@@ -125,22 +139,22 @@ const html = computed(() => renderMarkdown(props.content))
   text-align: left;
   padding: 0.55rem 0.75rem;
   font-weight: 600;
-  color: #cfe6ff;
-  background: rgba(74, 158, 255, 0.1);
-  border-bottom: 1px solid var(--color-border-hairline, #2a3441);
+  color: var(--accent-molybdenum);
+  background: color-mix(in srgb, var(--accent-molybdenum) 10%, transparent);
+  border-bottom: 1px solid var(--hairline);
   white-space: nowrap;
 }
 .chat-md :deep(.md-td) {
   padding: 0.5rem 0.75rem;
   vertical-align: top;
-  color: var(--color-text-primary, #e6edf3);
-  border-bottom: 1px solid rgba(42, 52, 65, 0.7);
+  color: var(--text-primary);
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
   line-height: 1.55;
 }
 .chat-md :deep(.md-tr:last-child .md-td) {
   border-bottom: 0;
 }
 .chat-md :deep(.md-tr:nth-child(even) .md-td) {
-  background: rgba(255, 255, 255, 0.015);
+  background: color-mix(in srgb, var(--foreground) 2.5%, transparent);
 }
 </style>

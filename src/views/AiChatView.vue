@@ -20,9 +20,12 @@ import {
   X,
   Wand2,
   LibraryBig,
+  Wrench,
+  BookOpenText,
 } from 'lucide-vue-next'
 import { ApiError } from '@/lib/api'
 import {
+  cancelChatSession,
   createChatSession,
   deleteChatSession,
   fetchRelatedQuestions,
@@ -39,6 +42,10 @@ import {
   listKnowledgeBases,
   type KnowledgeBaseItem,
 } from '@/lib/knowledge-api'
+import {
+  listPromptOptions,
+  type PromptOption,
+} from '@/lib/prompts-api'
 import ChatMarkdown from '@/components/ai/ChatMarkdown.vue'
 
 type Mode = ChatMode
@@ -49,6 +56,99 @@ interface RefChunk {
   doc_id?: string
   kb_id?: string
   kbId?: string
+}
+
+interface ToolCallUi {
+  id: string
+  toolName: string
+  phase: 'call' | 'result'
+  arguments?: Record<string, unknown>
+  content?: string
+  error?: string | null
+  durationMs?: number
+  table?: ToolTable | null
+}
+
+interface ToolTable {
+  headers: string[]
+  rows: string[][]
+}
+
+/** 尝试把工具返回内容解析成表格（JSON 行数组 / {columns,rows}） */
+function tryParseToolTable(content: string | undefined): ToolTable | null {
+  if (!content) return null
+  const raw = content.trim()
+  if (!raw) return null
+
+  const asTable = (rows: unknown): ToolTable | null => {
+    if (!Array.isArray(rows) || rows.length === 0) return null
+    if (rows.every((r) => r && typeof r === 'object' && !Array.isArray(r))) {
+      const objs = rows as Record<string, unknown>[]
+      const headers = [...new Set(objs.flatMap((o) => Object.keys(o)))]
+      if (headers.length === 0) return null
+      return {
+        headers,
+        rows: objs.map((o) => headers.map((h) => {
+          const v = o[h]
+          if (v == null) return ''
+          if (typeof v === 'object') return JSON.stringify(v)
+          return String(v)
+        })),
+      }
+    }
+    if (rows.every((r) => Array.isArray(r))) {
+      const matrix = rows as unknown[][]
+      const width = Math.max(...matrix.map((r) => r.length), 0)
+      if (width === 0) return null
+      const headers = Array.from({ length: width }, (_, i) => `列${i + 1}`)
+      return {
+        headers,
+        rows: matrix.map((r) =>
+          headers.map((_, i) => (r[i] == null ? '' : String(r[i]))),
+        ),
+      }
+    }
+    return null
+  }
+
+  const tryJson = (text: string): ToolTable | null => {
+    try {
+      const data = JSON.parse(text) as unknown
+      if (Array.isArray(data)) return asTable(data)
+      if (data && typeof data === 'object') {
+        const obj = data as Record<string, unknown>
+        if (Array.isArray(obj.rows)) {
+          const t = asTable(obj.rows)
+          if (t && Array.isArray(obj.columns)) {
+            const cols = (obj.columns as unknown[]).map(String)
+            if (cols.length > 0) return { headers: cols, rows: t.rows }
+          }
+          return t
+        }
+        if (Array.isArray(obj.data)) return asTable(obj.data)
+        if (Array.isArray(obj.result)) return asTable(obj.result)
+      }
+    } catch {
+      // ignore
+    }
+    return null
+  }
+
+  const direct = tryJson(raw)
+  if (direct) return direct
+
+  const arrMatch = raw.match(/\[[\s\S]*\]/)
+  if (arrMatch) {
+    const nested = tryJson(arrMatch[0])
+    if (nested) return nested
+  }
+  return null
+}
+
+function shortToolName(name: string): string {
+  const m = name.match(/_(list_|describe_|execute_|sample_|read_)/i)
+  if (m && m.index != null) return name.slice(m.index + 1)
+  return name.length > 36 ? `…${name.slice(-32)}` : name
 }
 
 interface Msg {
@@ -63,6 +163,7 @@ interface Msg {
   knowledgeBaseIds?: string[]
   knowledgeBaseNames?: string[]
   useKnowledge?: boolean
+  toolCalls?: ToolCallUi[]
 }
 
 function kbIdsFromMessages(
@@ -114,6 +215,9 @@ const mode = ref<Mode>('fast')
 const kbList = ref<KnowledgeBaseItem[]>([])
 const selectedKbIds = ref<string[]>([])
 const kbPickerOpen = ref(false)
+const promptList = ref<PromptOption[]>([])
+const selectedPromptId = ref<string | null>(null)
+const promptPickerOpen = ref(false)
 const messages = ref<Msg[]>([])
 const input = ref('')
 const sending = ref(false)
@@ -128,6 +232,7 @@ const deleting = ref(false)
 const toast = ref<{ type: 'ok' | 'err'; msg: string } | null>(null)
 const listRef = ref<HTMLDivElement | null>(null)
 const kbPickerRef = ref<HTMLDivElement | null>(null)
+const promptPickerRef = ref<HTMLDivElement | null>(null)
 let abortController: AbortController | null = null
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -135,6 +240,13 @@ const useKnowledge = computed(() => selectedKbIds.value.length > 0)
 const selectedKbNames = computed(() =>
   kbList.value.filter((b) => selectedKbIds.value.includes(b.id)).map((b) => b.name),
 )
+const selectedPromptName = computed(() => {
+  if (!selectedPromptId.value) return null
+  return (
+    promptList.value.find((p) => p.id === selectedPromptId.value)?.name || '已选提示词'
+  )
+})
+const usePrompt = computed(() => Boolean(selectedPromptId.value))
 
 watch(messages, async () => {
   await nextTick()
@@ -153,9 +265,12 @@ watch(toast, (v) => {
 })
 
 function onDocClick(e: MouseEvent) {
-  if (!kbPickerOpen.value) return
-  if (!kbPickerRef.value?.contains(e.target as Node)) {
+  const target = e.target as Node
+  if (kbPickerOpen.value && !kbPickerRef.value?.contains(target)) {
     kbPickerOpen.value = false
+  }
+  if (promptPickerOpen.value && !promptPickerRef.value?.contains(target)) {
+    promptPickerOpen.value = false
   }
 }
 
@@ -178,6 +293,16 @@ onMounted(() => {
   void (async () => {
     try {
       kbList.value = await listKnowledgeBases()
+    } catch {
+      // 未登录或接口失败时保持空列表
+    }
+  })()
+  void (async () => {
+    try {
+      promptList.value = await listPromptOptions()
+      if (!selectedPromptId.value && promptList.value.length > 0) {
+        selectedPromptId.value = promptList.value[0].id
+      }
     } catch {
       // 未登录或接口失败时保持空列表
     }
@@ -231,6 +356,12 @@ async function openSession(sessionId: string) {
   }
 }
 
+function ensureDefaultPrompt() {
+  if (!selectedPromptId.value && promptList.value.length > 0) {
+    selectedPromptId.value = promptList.value[0].id
+  }
+}
+
 async function handleCreateSession() {
   if (creatingSession.value || sending.value) return
   creatingSession.value = true
@@ -239,6 +370,7 @@ async function handleCreateSession() {
     sessions.value = [item, ...sessions.value]
     activeSessionId.value = item.id
     messages.value = []
+    ensureDefaultPrompt()
     toast.value = { type: 'ok', msg: '已新建会话' }
   } catch (e) {
     toast.value = {
@@ -331,6 +463,13 @@ async function sendQuestion(text: string) {
     return
   }
 
+  // 清理上次停止/异常可能残留的会话锁，避免立刻重问 Failed to fetch
+  try {
+    await cancelChatSession(sessionId)
+  } catch {
+    // ignore
+  }
+
   const userMsg: Msg = { id: genId(), role: 'user', content: q }
   const assistantId = genId()
   const assistantMsg: Msg = {
@@ -344,12 +483,14 @@ async function sendQuestion(text: string) {
     useKnowledge: useKnowledge.value,
     knowledgeBaseIds: [...selectedKbIds.value],
     knowledgeBaseNames: [...selectedKbNames.value],
+    toolCalls: [],
   }
   messages.value = [...messages.value, userMsg, assistantMsg]
 
   const controller = new AbortController()
   abortController = controller
   let accumulated = ''
+  const toolCalls: ToolCallUi[] = []
 
   const patchAssistant = (patch: Partial<Msg>) => {
     messages.value = messages.value.map((m) =>
@@ -364,10 +505,45 @@ async function sendQuestion(text: string) {
         mode: mode.value,
         sessionId,
         knowledgeBaseIds: selectedKbIds.value,
+        promptId: selectedPromptId.value,
       },
       {
         onRefs: (chunks) => {
           patchAssistant({ refs: chunks as RefChunk[] })
+        },
+        onTool: (payload) => {
+          const key = payload.toolCallId || payload.toolName || payload.name || genId()
+          const name = payload.toolName || payload.name || 'tool'
+          const idx = toolCalls.findIndex((t) => t.id === key)
+          if (payload.phase === 'call') {
+            const row: ToolCallUi = {
+              id: key,
+              toolName: name,
+              phase: 'call',
+              arguments: payload.arguments,
+            }
+            if (idx >= 0) toolCalls[idx] = row
+            else toolCalls.push(row)
+          } else {
+            const content = payload.content
+            const row: ToolCallUi = {
+              id: key,
+              toolName: name,
+              phase: 'result',
+              arguments: idx >= 0 ? toolCalls[idx].arguments : payload.arguments,
+              content,
+              error: payload.error,
+              durationMs: payload.durationMs,
+              table: payload.error ? null : tryParseToolTable(content),
+            }
+            if (idx >= 0) toolCalls[idx] = row
+            else toolCalls.push(row)
+          }
+          patchAssistant({
+            toolCalls: [...toolCalls],
+            thinking: false,
+            loading: true,
+          })
         },
         onDelta: (textDelta) => {
           if (!textDelta) return
@@ -426,15 +602,24 @@ async function sendQuestion(text: string) {
     }
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') {
-      patchAssistant({ loading: false, thinking: false })
-    } else {
       const cur = messages.value.find((m) => m.id === assistantId)
+      const base = (cur?.content || '').trim()
       patchAssistant({
         loading: false,
         thinking: false,
-        content:
-          (cur?.content || '') +
-          `\n\n⚠️ 请求失败：${e instanceof Error ? e.message : '未知错误'}`,
+        content: base ? `${base}\n\n（已停止）` : '（已停止）',
+      })
+    } else {
+      const cur = messages.value.find((m) => m.id === assistantId)
+      const raw = e instanceof Error ? e.message : '未知错误'
+      const friendly =
+        raw === 'Failed to fetch' || /network|fetch/i.test(raw)
+          ? '网络中断或服务正忙（若刚点过停止，请再试一次；持续失败请新建会话）'
+          : raw
+      patchAssistant({
+        loading: false,
+        thinking: false,
+        content: `${cur?.content || ''}\n\n⚠️ 请求失败：${friendly}`,
       })
     }
   } finally {
@@ -443,8 +628,19 @@ async function sendQuestion(text: string) {
   }
 }
 
-function stop() {
-  abortController?.abort()
+async function stop() {
+  const sid = activeSessionId.value
+  const ctrl = abortController
+  // 先通知后端释锁，再 abort，避免锁残留导致下一问 Failed to fetch
+  if (sid) {
+    try {
+      await cancelChatSession(sid)
+    } catch {
+      // ignore：即使 cancel 失败也继续 abort
+    }
+  }
+  ctrl?.abort()
+  sending.value = false
 }
 
 function resetCurrent() {
@@ -472,7 +668,7 @@ function resetCurrent() {
             class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] transition-colors"
             :class="
               mode === 'fast'
-                ? 'bg-iron text-bg-base font-medium'
+                ? 'bg-iron text-white font-medium'
                 : 'text-text-secondary hover:text-text-primary'
             "
             @click="mode = 'fast'"
@@ -484,13 +680,83 @@ function resetCurrent() {
             class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] transition-colors"
             :class="
               mode === 'deep'
-                ? 'bg-molybdenum text-bg-base font-medium'
+                ? 'bg-molybdenum text-white font-medium'
                 : 'text-text-secondary hover:text-text-primary'
             "
             @click="mode = 'deep'"
           >
             <Brain class="size-3.5" /> 深度推理
           </button>
+        </div>
+
+        <div ref="promptPickerRef" class="relative">
+          <button
+            type="button"
+            :title="
+              usePrompt
+                ? `已选提示词「${selectedPromptName}」`
+                : '未选提示词 = 不向大模型传系统提示词'
+            "
+            :disabled="sending"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] border transition-colors disabled:opacity-40"
+            :class="
+              usePrompt
+                ? 'bg-molybdenum/15 text-molybdenum border-molybdenum/40 font-medium'
+                : 'text-text-secondary border-hairline hover:text-text-primary bg-bg-base/60'
+            "
+            @click="promptPickerOpen = !promptPickerOpen"
+          >
+            <BookOpenText class="size-3.5" />
+            {{ usePrompt ? selectedPromptName : '选择提示词' }}
+          </button>
+          <div
+            v-if="promptPickerOpen"
+            class="absolute right-0 top-full z-30 mt-1.5 w-72 rounded-lg border border-hairline bg-bg-elevated shadow-xl p-2"
+          >
+            <div class="px-1.5 pb-1.5 mb-1.5 border-b border-hairline text-[11px] text-text-muted">
+              未选 = 不传系统提示词；仅可选已启用项
+            </div>
+            <div
+              v-if="promptList.length === 0"
+              class="px-2 py-4 text-center text-[11px] text-text-muted"
+            >
+              暂无可用提示词，请到「提示词管理」新增并启用
+            </div>
+            <div v-else class="max-h-56 overflow-y-auto space-y-0.5">
+              <button
+                v-for="p in promptList"
+                :key="p.id"
+                type="button"
+                class="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[12px] transition-colors"
+                :class="
+                  selectedPromptId === p.id
+                    ? 'bg-molybdenum/15 text-molybdenum'
+                    : 'text-text-secondary hover:bg-bg-base/60 hover:text-text-primary'
+                "
+                @click="selectedPromptId = p.id; promptPickerOpen = false"
+              >
+                <span
+                  class="size-3.5 rounded-full border inline-flex items-center justify-center shrink-0"
+                  :class="
+                    selectedPromptId === p.id
+                      ? 'border-molybdenum bg-molybdenum text-white'
+                      : 'border-hairline'
+                  "
+                >
+                  <Check v-if="selectedPromptId === p.id" class="size-2.5" />
+                </span>
+                <span class="truncate flex-1">{{ p.name }}</span>
+              </button>
+            </div>
+            <button
+              v-if="selectedPromptId"
+              type="button"
+              class="mt-1.5 w-full h-7 rounded-md text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-base/50"
+              @click="selectedPromptId = null; promptPickerOpen = false"
+            >
+              清空选择（不传提示词）
+            </button>
+          </div>
         </div>
 
         <div ref="kbPickerRef" class="relative">
@@ -543,7 +809,7 @@ function resetCurrent() {
                   class="size-3.5 rounded border inline-flex items-center justify-center shrink-0"
                   :class="
                     selectedKbIds.includes(b.id)
-                      ? 'border-patina bg-patina text-bg-base'
+                      ? 'border-patina bg-patina text-white'
                       : 'border-hairline'
                   "
                 >
@@ -698,17 +964,23 @@ function resetCurrent() {
             class="h-full flex flex-col items-center justify-center text-center py-10"
           >
             <div
-              class="size-14 rounded-xl bg-gradient-to-br from-iron via-iron/70 to-sulfur flex items-center justify-center mb-4 shadow-[0_0_28px_rgba(255,107,53,0.35)]"
+              class="size-14 rounded-xl bg-gradient-to-br from-iron via-iron/80 to-coolant flex items-center justify-center mb-4 shadow-[0_0_28px_var(--accent-glow)]"
             >
-              <BotMessageSquare class="size-7 text-bg-base" :stroke-width="2.4" />
+              <BotMessageSquare class="size-7 text-white" :stroke-width="2.4" />
             </div>
             <div class="text-[15px] font-semibold mb-1">车式窑助手</div>
             <div class="text-[12px] text-text-secondary max-w-md mb-5 leading-relaxed">
+              <template v-if="usePrompt">
+                已选提示词「{{ selectedPromptName }}」。
+              </template>
+              <template v-else>
+                未选提示词 = 不向大模型传系统提示词。
+              </template>
               <template v-if="useKnowledge">
                 已选知识库「{{ selectedKbNames.join('」「') }}」：将仅在这些库中检索片段辅助回答。
               </template>
               <template v-else>
-                未选知识库 = 不检索向量库，仅基于领域提示词与会话上下文回答。可在右上角「选择知识库」勾选一个或多个库。
+                未选知识库 = 不检索向量库。可在右上角选择提示词与知识库。
               </template>
               左侧可管理会话；直接提问会自动创建新会话。
             </div>
@@ -781,7 +1053,7 @@ function resetCurrent() {
                   </div>
 
                   <div
-                    v-if="m.thinking && !m.content"
+                    v-if="m.thinking && !m.content && !(m.toolCalls && m.toolCalls.length)"
                     class="flex items-center gap-2 text-[12px] text-text-secondary"
                   >
                     <Loader2 class="size-3.5 animate-spin text-molybdenum" />
@@ -792,7 +1064,7 @@ function resetCurrent() {
                     }}
                   </div>
                   <div
-                    v-else-if="!m.thinking && m.loading && !m.content"
+                    v-else-if="!m.thinking && m.loading && !m.content && !(m.toolCalls && m.toolCalls.length)"
                     class="flex items-center gap-2 text-[12px] text-text-secondary"
                   >
                     <Loader2 class="size-3.5 animate-spin text-iron" />
@@ -801,6 +1073,89 @@ function resetCurrent() {
                         ? '正在检索知识库并生成回答...'
                         : '正在生成回答...'
                     }}
+                  </div>
+
+                  <div
+                    v-if="m.toolCalls && m.toolCalls.length"
+                    class="mb-3 space-y-1.5"
+                  >
+                    <details
+                      v-for="tc in m.toolCalls"
+                      :key="`${tc.id}-${tc.phase}`"
+                      class="rounded-md border border-hairline bg-bg-surface/60 px-2.5 py-2 text-[11px] group"
+                      v-bind="tc.phase === 'call' ? { open: true } : {}"
+                    >
+                      <summary
+                        class="flex items-center gap-1.5 text-text-secondary cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden"
+                      >
+                        <Wrench class="size-3 text-molybdenum shrink-0" />
+                        <span class="font-mono text-text-primary truncate" :title="tc.toolName">
+                          {{ shortToolName(tc.toolName) }}
+                        </span>
+                        <Loader2
+                          v-if="tc.phase === 'call'"
+                          class="size-3 animate-spin text-molybdenum"
+                        />
+                        <span
+                          v-else-if="tc.error"
+                          class="text-iron"
+                        >失败</span>
+                        <span
+                          v-else
+                          class="text-patina"
+                        >完成{{ tc.durationMs != null ? ` · ${tc.durationMs}ms` : '' }}</span>
+                        <span class="ml-auto text-[10px] text-text-muted opacity-70">
+                          <span class="group-open:hidden">展开</span>
+                          <span class="hidden group-open:inline">收起</span>
+                        </span>
+                      </summary>
+                      <div
+                        v-if="tc.error"
+                        class="mt-1.5 text-iron whitespace-pre-wrap"
+                      >
+                        {{ tc.error }}
+                      </div>
+                      <template v-else-if="tc.content">
+                        <div
+                          v-if="tc.table"
+                          class="mt-1.5 overflow-x-auto rounded border border-hairline"
+                        >
+                          <table class="w-full border-collapse text-[11px] min-w-[280px]">
+                            <thead>
+                              <tr>
+                                <th
+                                  v-for="h in tc.table.headers"
+                                  :key="h"
+                                  class="text-left px-2 py-1.5 font-semibold text-molybdenum bg-molybdenum/10 border-b border-hairline whitespace-nowrap"
+                                >
+                                  {{ h }}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr
+                                v-for="(row, ri) in tc.table.rows"
+                                :key="ri"
+                                class="odd:bg-transparent even:bg-foreground/[0.025]"
+                              >
+                                <td
+                                  v-for="(cell, ci) in row"
+                                  :key="ci"
+                                  class="px-2 py-1.5 align-top text-text-primary border-b border-hairline/70 max-w-[220px] truncate"
+                                  :title="cell"
+                                >
+                                  {{ cell }}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <pre
+                          v-else
+                          class="mt-1.5 max-h-40 overflow-auto text-text-muted whitespace-pre-wrap font-mono text-[10.5px] leading-snug"
+                        >{{ tc.content }}</pre>
+                      </template>
+                    </details>
                   </div>
 
                   <ChatMarkdown
@@ -891,7 +1246,7 @@ function resetCurrent() {
               v-else
               type="button"
               :disabled="!input.trim()"
-              class="self-stretch flex items-center gap-1.5 px-5 rounded-md bg-iron text-bg-base text-[13px] font-medium hover:bg-[#ff7d4e] disabled:opacity-50"
+              class="self-stretch flex items-center gap-1.5 px-5 rounded-md bg-iron text-white text-[13px] font-medium hover:brightness-110 disabled:opacity-50"
               @click="sendQuestion(input)"
             >
               <Send class="size-4" />
@@ -906,6 +1261,10 @@ function resetCurrent() {
               {{ activeSessionId ? '已关联会话' : '发送后自动新建会话' }} ·
               <span :class="mode === 'deep' ? 'text-molybdenum' : 'text-iron'">
                 {{ mode === 'deep' ? '深度推理' : '快速回答' }}
+              </span>
+              ·
+              <span :class="usePrompt ? 'text-molybdenum' : 'text-text-muted'">
+                {{ usePrompt ? `提示词：${selectedPromptName}` : '未选提示词' }}
               </span>
               ·
               <span :class="useKnowledge ? 'text-patina' : 'text-text-muted'">
@@ -994,7 +1353,7 @@ function resetCurrent() {
           <button
             type="button"
             :disabled="deleting"
-            class="h-8 px-3 text-[12px] rounded-md bg-iron text-[#0b0f14] hover:bg-[#ff7d4e] inline-flex items-center gap-1.5"
+            class="h-8 px-3 text-[12px] rounded-md bg-iron text-white hover:brightness-110 inline-flex items-center gap-1.5"
             @click="confirmDelete()"
           >
             <Loader2 v-if="deleting" class="size-3.5 animate-spin" />

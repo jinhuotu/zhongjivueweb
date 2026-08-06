@@ -55,6 +55,7 @@ import {
   LifeBuoy,
   BookOpenText,
   BarChart3,
+  Plug,
 } from 'lucide-vue-next'
 
 export type NavItem = {
@@ -110,6 +111,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/ai-chat', label: 'AI 智能问答', icon: BotMessageSquare },
       { href: '/ai-reports', label: 'AI 智能报告', icon: FileSearch },
       { href: '/model-manage', label: '模型管理', icon: Boxes, adminOnly: true },
+      { href: '/prompt-manage', label: '提示词管理', icon: BookOpenText, adminOnly: true },
+      { href: '/mcp-manage', label: 'MCP 管理', icon: Plug, adminOnly: true },
       { href: '/knowledge', label: '知识库', icon: LibraryBig },
     ],
   },

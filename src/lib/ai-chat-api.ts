@@ -20,7 +20,7 @@ export type ChatSessionItem = {
 
 export type ChatSessionMessage = {
   id: string;
-  role: 'user' | 'assistant' | 'system' | string;
+  role: 'user' | 'assistant' | 'system' | 'tool' | string;
   content: string;
   mode?: string | null;
   refs?: {
@@ -33,6 +33,11 @@ export type ChatSessionMessage = {
   knowledgeBaseIds?: string[];
   useKnowledge?: boolean;
   createdAt: number;
+  toolName?: string | null;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  toolError?: string | null;
+  toolDurationMs?: number | null;
 };
 
 function requireToken(): string {
@@ -86,6 +91,14 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
   });
 }
 
+/** 停止生成：强制释放后端会话锁，避免点停止后重问 Failed to fetch */
+export async function cancelChatSession(sessionId: string): Promise<void> {
+  await apiRequest(`/api/v1/ai/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+    method: 'POST',
+    token: requireToken(),
+  });
+}
+
 export async function summarizeChatSessionTitle(sessionId: string): Promise<ChatSessionItem> {
   const data = await apiRequest<{ item: ChatSessionItem }>(
     `/api/v1/ai/sessions/${encodeURIComponent(sessionId)}/summarize-title`,
@@ -106,9 +119,22 @@ export async function fetchRelatedQuestions(input: {
   return data.questions || [];
 }
 
+export type ToolEventPayload = {
+  phase: 'call' | 'result';
+  toolCallId?: string;
+  name?: string;
+  toolName?: string;
+  serverId?: string | null;
+  arguments?: Record<string, unknown>;
+  content?: string;
+  error?: string | null;
+  durationMs?: number;
+};
+
 export type StreamHandlers = {
   onRefs?: (chunks: unknown[]) => void;
   onDelta?: (text: string) => void;
+  onTool?: (payload: ToolEventPayload) => void;
   onDone?: (payload: { ok?: boolean; title?: string; sessionId?: string }) => void;
   onError?: (msg: string) => void;
 };
@@ -123,12 +149,15 @@ export async function streamChat(
     useKnowledge?: boolean;
     /** 选中的知识库 publicId；空数组 = 不检索 */
     knowledgeBaseIds?: string[];
+    /** 选中的提示词 publicId；未传/空 = 不注入系统提示词基座 */
+    promptId?: string | null;
   },
   handlers: StreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
   const token = requireToken();
   const knowledgeBaseIds = (input.knowledgeBaseIds || []).filter(Boolean);
+  const promptId = (input.promptId || '').trim() || undefined;
   const res = await fetch(`${getApiBaseUrl()}/api/v1/ai/chat`, {
     method: 'POST',
     headers: {
@@ -142,6 +171,7 @@ export async function streamChat(
       sessionId: input.sessionId,
       knowledgeBaseIds,
       useKnowledge: knowledgeBaseIds.length > 0,
+      ...(promptId ? { promptId } : {}),
     }),
     signal,
   });
@@ -161,40 +191,49 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // 兼容 \n\n 与 \r\n\r\n 分帧
-    buffer = buffer.replace(/\r\n/g, '\n');
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // 兼容 \n\n 与 \r\n\r\n 分帧
+      buffer = buffer.replace(/\r\n/g, '\n');
 
-    let idx: number;
-    while ((idx = buffer.indexOf('\n\n')) !== -1) {
-      const block = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      const lines = block.split('\n');
-      let event = 'message';
-      const dataParts: string[] = [];
-      for (const raw of lines) {
-        const ln = raw.replace(/\r$/, '');
-        if (ln.startsWith('event:')) {
-          event = ln.slice(6).trim();
-        } else if (ln.startsWith('data:')) {
-          // 兼容 "data: {...}" 与 "data:{...}"
-          dataParts.push(ln.slice(5).replace(/^\s/, ''));
+      let idx: number;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const lines = block.split('\n');
+        let event = 'message';
+        const dataParts: string[] = [];
+        for (const raw of lines) {
+          const ln = raw.replace(/\r$/, '');
+          if (ln.startsWith('event:')) {
+            event = ln.slice(6).trim();
+          } else if (ln.startsWith('data:')) {
+            // 兼容 "data: {...}" 与 "data:{...}"
+            dataParts.push(ln.slice(5).replace(/^\s/, ''));
+          }
+        }
+        const data = dataParts.join('\n');
+        if (!data || data.startsWith(':')) continue;
+        try {
+          const payload = JSON.parse(data);
+          if (event === 'refs') handlers.onRefs?.(payload.chunks || []);
+          else if (event === 'delta') handlers.onDelta?.(String(payload.text ?? ''));
+          else if (event === 'tool') handlers.onTool?.(payload as ToolEventPayload);
+          else if (event === 'done') handlers.onDone?.(payload);
+          else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));
+        } catch {
+          // ignore malformed SSE JSON chunks
         }
       }
-      const data = dataParts.join('\n');
-      if (!data || data.startsWith(':')) continue;
-      try {
-        const payload = JSON.parse(data);
-        if (event === 'refs') handlers.onRefs?.(payload.chunks || []);
-        else if (event === 'delta') handlers.onDelta?.(String(payload.text ?? ''));
-        else if (event === 'done') handlers.onDone?.(payload);
-        else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));
-      } catch {
-        // ignore malformed SSE JSON chunks
-      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
     }
   }
 }

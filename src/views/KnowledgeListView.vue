@@ -340,7 +340,7 @@ async function confirmDelete() {
         <div class="px-5 py-3 border-t border-hairline flex justify-end gap-2">
           <button
             type="button"
-            class="px-3 py-1.5 text-[12px] rounded-md text-text-secondary hover:bg-hairline/40 disabled:opacity-50"
+            class="kb-btn-secondary"
             :disabled="saving"
             @click="closeModal"
           >
@@ -406,7 +406,7 @@ async function confirmDelete() {
           <button
             type="button"
             :disabled="Boolean(deletingId)"
-            class="h-8 px-3 text-[12px] rounded-md bg-iron text-[#0b0f14] hover:bg-[#ff7d4e] inline-flex items-center gap-1.5"
+            class="h-8 px-3 text-[12px] rounded-md bg-iron text-white hover:brightness-110 inline-flex items-center gap-1.5"
             @click="confirmDelete()"
           >
             <template v-if="deletingId">
@@ -465,37 +465,25 @@ async function confirmDelete() {
 
 <style scoped>
 :deep(.kb-input) {
-  background: rgba(11, 15, 20, 0.6);
-  border: 1px solid var(--color-border-hairline, #2a3441);
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
-  color: var(--color-text-primary, #e6edf3);
+  color: var(--text-primary);
   font-size: 12px;
   padding: 8px 10px;
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+:deep(.kb-input::placeholder) {
+  color: var(--text-muted);
+}
 :deep(.kb-input:focus) {
   outline: none;
-  border-color: var(--color-molybdenum, #4a9eff);
-  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.12);
+  border-color: var(--accent-molybdenum);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-molybdenum) 18%, transparent);
 }
 :deep(.kb-input:disabled) {
   opacity: 0.6;
-  cursor: not-allowed;
-}
-:deep(.kb-btn-primary) {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  font-size: 12px;
-  border-radius: 6px;
-  background: var(--color-iron, #ff6b35);
-  color: #0b0f14;
-  font-weight: 500;
-}
-:deep(.kb-btn-primary:disabled) {
-  opacity: 0.55;
   cursor: not-allowed;
 }
 .kb-enter-mask {

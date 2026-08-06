@@ -130,7 +130,7 @@ function toggleMobile(title: string) {
   >
     <div class="flex h-14 items-center gap-2 border-b border-sidebar-border px-5">
       <div
-        class="relative flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-iron via-iron/70 to-sulfur shadow-[0_0_18px_rgba(255,107,53,0.35)]"
+        class="relative flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-iron via-iron/80 to-coolant shadow-[0_0_18px_var(--accent-glow)]"
       >
         <Flame class="size-4 text-background" :stroke-width="2.5" />
       </div>
@@ -313,7 +313,7 @@ function toggleMobile(title: string) {
   >
     <div class="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
       <div
-        class="relative flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-iron via-iron/70 to-sulfur shadow-[0_0_18px_rgba(255,107,53,0.35)]"
+        class="relative flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-iron via-iron/80 to-coolant shadow-[0_0_18px_var(--accent-glow)]"
       >
         <Flame class="size-4 text-background" :stroke-width="2.5" />
       </div>

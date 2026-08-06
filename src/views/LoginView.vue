@@ -86,10 +86,10 @@ async function onSubmit() {
               工业燃气车式窑数字化能碳管控平台 · 登录后进入能碳总览与运维工作台。
             </p>
           </div>
-          <div class="space-y-2 text-xs text-muted-foreground">
+          <!-- <div class="space-y-2 text-xs text-muted-foreground">
             <div>后端：FastAPI · JWT Access / Refresh</div>
             <div>默认管理员：中机六院管理员</div>
-          </div>
+          </div> -->
         </section>
 
         <section class="p-6 sm:p-8 lg:p-10">
@@ -156,12 +156,12 @@ async function onSubmit() {
             </button>
           </form>
 
-          <p class="mt-5 text-[11px] leading-relaxed text-muted-foreground">
+          <!-- <p class="mt-5 text-[11px] leading-relaxed text-muted-foreground">
             开发默认账号
             <span class="text-foreground/80">admin</span> /
             <span class="text-foreground/80"> Admin@123456</span>
             ，显示名：中机六院管理员
-          </p>
+          </p> -->
         </section>
       </div>
     </div>

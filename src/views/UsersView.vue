@@ -904,7 +904,7 @@ function onDeleteUserOpen(v: boolean) {
         <button
           type="button"
           :disabled="saving"
-          class="h-8 px-3 rounded-md text-[12px] border border-hairline text-text-secondary hover:text-text-primary"
+          class="kb-btn-secondary"
           @click="modalOpen = false"
         >
           取消
@@ -912,7 +912,7 @@ function onDeleteUserOpen(v: boolean) {
         <button
           type="button"
           :disabled="saving"
-          class="h-8 px-3 rounded-md text-[12px] bg-iron text-[#0b0f14] hover:bg-[#ff7d4e] inline-flex items-center gap-1.5 disabled:opacity-55"
+          class="kb-btn-primary"
           @click="submit()"
         >
           <Loader2 v-if="saving" class="size-3.5 animate-spin" />
@@ -959,18 +959,21 @@ function onDeleteUserOpen(v: boolean) {
 
 <style scoped>
 :deep(.kb-input) {
-  background: rgba(11, 15, 20, 0.6);
-  border: 1px solid var(--color-border-hairline, #2a3441);
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
-  color: var(--color-text-primary, #e6edf3);
+  color: var(--text-primary);
   font-size: 12px;
   padding: 8px 10px;
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+:deep(.kb-input::placeholder) {
+  color: var(--text-muted);
+}
 :deep(.kb-input:focus) {
   outline: none;
-  border-color: color-mix(in oklab, var(--color-iron, #ff6b35) 55%, transparent);
+  border-color: color-mix(in oklab, var(--accent-iron) 55%, transparent);
 }
 :deep(.kb-input:disabled) {
   cursor: not-allowed;
