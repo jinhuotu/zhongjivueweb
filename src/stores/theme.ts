@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue'
 
 export type ThemeMode = 'dark' | 'light'
 
-const STORAGE_KEY = 'zjly-theme'
+/** v2：默认浅色；与旧 key 隔离，避免历史深色偏好覆盖新产品默认 */
+const STORAGE_KEY = 'zjly-theme-v2'
 
 function readStoredTheme(): ThemeMode {
   try {

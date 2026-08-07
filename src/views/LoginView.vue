@@ -51,17 +51,17 @@ async function onSubmit() {
     class="relative min-h-screen overflow-hidden bg-background text-foreground"
   >
     <div
-      class="pointer-events-none absolute inset-0 opacity-80"
+      class="pointer-events-none absolute inset-0"
       :style="{
         background:
-          'radial-gradient(ellipse 80% 60% at 20% 20%, rgba(61,139,253,0.18), transparent 55%), radial-gradient(ellipse 70% 50% at 85% 75%, rgba(232,93,58,0.12), transparent 50%), linear-gradient(160deg, #08132a 0%, #0a1836 45%, #071022 100%)',
+          'radial-gradient(ellipse 80% 55% at 15% 10%, rgba(37,99,235,0.14), transparent 55%), radial-gradient(ellipse 70% 50% at 90% 80%, rgba(14,165,233,0.1), transparent 50%), linear-gradient(165deg, #f8fbff 0%, #eef4ff 48%, #f5f8fc 100%)',
       }"
     />
     <div
-      class="pointer-events-none absolute inset-0 opacity-[0.07]"
+      class="pointer-events-none absolute inset-0 opacity-[0.35]"
       :style="{
         backgroundImage:
-          'linear-gradient(rgba(230,237,243,0.35) 1px, transparent 1px), linear-gradient(90deg, rgba(230,237,243,0.35) 1px, transparent 1px)',
+          'linear-gradient(rgba(37,99,235,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,0.08) 1px, transparent 1px)',
         backgroundSize: '48px 48px',
       }"
     />
@@ -70,7 +70,7 @@ async function onSubmit() {
       class="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4 py-10"
     >
       <div
-        class="grid w-full max-w-4xl overflow-hidden rounded-xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur md:grid-cols-[1.1fr_0.9fr]"
+        class="grid w-full max-w-4xl overflow-hidden rounded-xl border border-border bg-card/95 shadow-[0_20px_60px_rgba(37,99,235,0.12)] backdrop-blur md:grid-cols-[1.1fr_0.9fr]"
       >
         <section
           class="relative hidden flex-col justify-between border-r border-border p-8 md:flex lg:p-10"

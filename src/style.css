@@ -69,9 +69,10 @@
 }
 
 :root {
+  color-scheme: light;
   --radius: 0.5rem;
 
-  /* Light — Blue & White */
+  /* Light — Blue & White (default) */
   --background: #f5f8fc;
   --foreground: #000000;
   --card: #ffffff;
@@ -134,6 +135,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   /* Furnace Control Room — Deep Navy Edition */
   --background: #08132a;
   --foreground: #e6edf3;

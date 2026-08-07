@@ -9,6 +9,7 @@ import {
   LegendComponent,
 } from 'echarts/components'
 import VChart from 'vue-echarts'
+import { tooltipBase, useChartPalette } from './theme'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -22,53 +23,56 @@ const props = withDefaults(
   { height: 220 },
 )
 
-const option = computed(() => ({
-  animation: false,
-  grid: { left: 36, right: 12, top: 24, bottom: 28 },
-  tooltip: {
-    trigger: 'axis' as const,
-    backgroundColor: '#1c242e',
-    borderColor: '#2f3a48',
-    textStyle: { color: '#e6edf3', fontSize: 12 },
-  },
-  legend: {
-    show: props.keys.length > 1,
-    textStyle: { color: '#8b97a8', fontSize: 11 },
-    top: 0,
-  },
-  xAxis: {
-    type: 'category' as const,
-    data: props.data.map((d) => String(d.name ?? '')),
-    axisLine: { lineStyle: { color: '#2a3441' } },
-    axisLabel: { color: '#5A6677', fontSize: 10, fontFamily: 'JetBrains Mono' },
-    axisTick: { show: false },
-  },
-  yAxis: {
-    type: 'value' as const,
-    axisLine: { lineStyle: { color: '#2a3441' } },
-    axisLabel: {
-      color: '#5A6677',
-      fontSize: 10,
-      fontFamily: 'JetBrains Mono',
-      formatter: (v: number) => `${v}${props.yUnit ?? ''}`,
+const palette = useChartPalette()
+
+const option = computed(() => {
+  const p = palette.value
+  return {
+    animation: false,
+    grid: { left: 36, right: 12, top: 24, bottom: 28 },
+    tooltip: {
+      ...tooltipBase(p),
+      trigger: 'axis' as const,
     },
-    splitLine: { lineStyle: { color: '#2a3441', type: 'dashed' as const } },
-    axisTick: { show: false },
-  },
-  series: props.keys.map((k) => ({
-    name: k.label ?? k.key,
-    type: 'line' as const,
-    data: props.data.map((d) => Number(d[k.key] ?? 0)),
-    smooth: true,
-    showSymbol: false,
-    lineStyle: {
-      color: k.color,
-      width: 2,
-      type: k.dashed ? ('dashed' as const) : ('solid' as const),
+    legend: {
+      show: props.keys.length > 1,
+      textStyle: { color: p.legend, fontSize: 11 },
+      top: 0,
     },
-    itemStyle: { color: k.color },
-  })),
-}))
+    xAxis: {
+      type: 'category' as const,
+      data: props.data.map((d) => String(d.name ?? '')),
+      axisLine: { lineStyle: { color: p.grid } },
+      axisLabel: { color: p.axis, fontSize: 10, fontFamily: 'JetBrains Mono' },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value' as const,
+      axisLine: { lineStyle: { color: p.grid } },
+      axisLabel: {
+        color: p.axis,
+        fontSize: 10,
+        fontFamily: 'JetBrains Mono',
+        formatter: (v: number) => `${v}${props.yUnit ?? ''}`,
+      },
+      splitLine: { lineStyle: { color: p.grid, type: 'dashed' as const } },
+      axisTick: { show: false },
+    },
+    series: props.keys.map((k) => ({
+      name: k.label ?? k.key,
+      type: 'line' as const,
+      data: props.data.map((d) => Number(d[k.key] ?? 0)),
+      smooth: true,
+      showSymbol: false,
+      lineStyle: {
+        color: k.color,
+        width: 2,
+        type: k.dashed ? ('dashed' as const) : ('solid' as const),
+      },
+      itemStyle: { color: k.color },
+    })),
+  }
+})
 </script>
 
 <template>

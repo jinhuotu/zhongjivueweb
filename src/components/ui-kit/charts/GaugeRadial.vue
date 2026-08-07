@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { EChartsOption } from 'echarts'
 import VChart from 'vue-echarts'
 import { ensureEcharts } from './register'
+import { useChartPalette } from './theme'
 
 ensureEcharts()
 
@@ -16,17 +17,20 @@ const props = withDefaults(
     height?: number
   }>(),
   {
-    color: '#FF6B35',
+    color: '#2563eb',
     unit: '%',
     max: 100,
     height: 180,
   },
 )
 
+const palette = useChartPalette()
+
 const option = computed<EChartsOption>(() => {
   const color = props.color
   const unit = props.unit
   const label = props.label
+  const p = palette.value
   return {
     series: [
       {
@@ -58,7 +62,7 @@ const option = computed<EChartsOption>(() => {
         axisLine: {
           lineStyle: {
             width: 10,
-            color: [[1, '#1c242e']],
+            color: [[1, p.track]],
           },
         },
         pointer: { show: false },
@@ -79,7 +83,7 @@ const option = computed<EChartsOption>(() => {
             },
             unit: {
               fontSize: 12,
-              color: '#8b97a8',
+              color: p.legend,
               padding: [0, 0, 0, 2],
               fontFamily: 'JetBrains Mono, monospace',
             },
@@ -89,7 +93,7 @@ const option = computed<EChartsOption>(() => {
           show: !!label,
           offsetCenter: [0, '32%'],
           fontSize: 10,
-          color: '#8b97a8',
+          color: p.legend,
         },
         data: [{ value: props.value, name: label ?? '' }],
       },
@@ -99,7 +103,5 @@ const option = computed<EChartsOption>(() => {
 </script>
 
 <template>
-  <div class="relative w-full" :style="{ height: `${height}px` }">
-    <VChart :option="option" autoresize class="h-full w-full" />
-  </div>
+  <VChart :option="option" autoresize :style="{ height: `${height}px`, width: '100%' }" />
 </template>

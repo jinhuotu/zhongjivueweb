@@ -4,10 +4,8 @@ import type { EChartsOption } from 'echarts'
 import VChart from 'vue-echarts'
 import { ensureEcharts } from './register'
 import {
-  AXIS_COLOR,
-  GRID_COLOR,
-  LEGEND_COLOR,
   tooltipBase,
+  useChartPalette,
   withYUnit,
   type ChartDatum,
   type ChartKey,
@@ -25,44 +23,47 @@ const props = withDefaults(
   { height: 220 },
 )
 
+const palette = useChartPalette()
+
 const option = computed<EChartsOption>(() => {
+  const p = palette.value
   const categories = props.data.map((d) => String(d.name ?? ''))
   return {
     grid: { left: 36, right: 16, top: 36, bottom: 28 },
     legend: {
       top: 0,
-      textStyle: { color: LEGEND_COLOR, fontSize: 11 },
+      textStyle: { color: p.legend, fontSize: 11 },
       itemWidth: 10,
       itemHeight: 10,
     },
     tooltip: {
-      ...tooltipBase,
+      ...tooltipBase(p),
       trigger: 'axis',
-      axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(255,255,255,0.03)' } },
+      axisPointer: { type: 'shadow', shadowStyle: { color: p.pointerShadow } },
     },
     xAxis: {
       type: 'category',
       data: categories,
-      axisLine: { lineStyle: { color: GRID_COLOR } },
+      axisLine: { lineStyle: { color: p.grid } },
       axisTick: { show: false },
       axisLabel: {
-        color: AXIS_COLOR,
+        color: p.axis,
         fontSize: 10,
         fontFamily: 'JetBrains Mono, monospace',
       },
     },
     yAxis: {
       type: 'value',
-      axisLine: { lineStyle: { color: GRID_COLOR } },
+      axisLine: { lineStyle: { color: p.grid } },
       axisTick: { show: false },
       axisLabel: {
-        color: AXIS_COLOR,
+        color: p.axis,
         fontSize: 10,
         fontFamily: 'JetBrains Mono, monospace',
         formatter: withYUnit(props.yUnit),
       },
       splitLine: {
-        lineStyle: { color: GRID_COLOR, type: [2, 4] },
+        lineStyle: { color: p.grid, type: [2, 4] },
       },
     },
     series: props.keys.map((k) => ({

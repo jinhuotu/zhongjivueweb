@@ -7,10 +7,84 @@ export const COLOR = {
   rose: '#E06B8A',
 }
 
+export const energyMonth = Array.from({ length: 30 }, (_, i) => {
+  return {
+    name: `${i + 1}`,
+    天然气: +(620 + Math.sin(i / 5) * 80 + Math.random() * 40).toFixed(0),
+    辅助电力: +(108 + Math.cos(i / 4) * 12 + Math.random() * 8).toFixed(0),
+    蒸汽: +(72 + Math.sin(i / 6) * 10 + Math.random() * 6).toFixed(0),
+  }
+})
+
+export const energyMix = [
+  { name: '天然气', value: 78.4, color: COLOR.sulfur },
+  { name: '辅助电力（风机/控制）', value: 12.6, color: COLOR.molybdenum },
+  { name: '低压蒸汽', value: 4.2, color: COLOR.coolant },
+  { name: '焦炉煤气（备用）', value: 2.4, color: COLOR.iron },
+  { name: '绿电消纳', value: 2.4, color: COLOR.patina },
+]
+
 export const carbonScope = [
   { name: '范围一 天然气燃烧', value: 82.6, color: COLOR.iron },
   { name: '范围二 外购电力', value: 14.8, color: COLOR.molybdenum },
   { name: '范围三 上游甲烷逸散等', value: 2.6, color: COLOR.coolant },
+]
+
+export const optimizationSuggestions = [
+  {
+    title: '2# 正火车式窑 空燃比闭环 + 残氧 PID 整定',
+    target: '2# 正火车式窑',
+    saveEnergy: '840 tce/年',
+    saveCarbon: '2210 tCO₂/年',
+    payback: '1.8 个月',
+    confidence: 'high' as const,
+    method: '燃烧诊断',
+  },
+  {
+    title: '3# 调质车式窑 蓄热式烧嘴空气预热温度提至 880℃',
+    target: '3# 调质车式窑',
+    saveEnergy: '1240 tce/年',
+    saveCarbon: '3260 tCO₂/年',
+    payback: '6.4 个月',
+    confidence: 'high' as const,
+    method: '余热挖潜',
+  },
+  {
+    title: '4# 烧成车式窑 烟气余热回收增设有机朗肯循环 ORC',
+    target: '4# 烧成车式窑',
+    saveEnergy: '1640 tce/年',
+    saveCarbon: '4310 tCO₂/年',
+    payback: '14 个月',
+    confidence: 'medium' as const,
+    method: '热平衡 + ROI',
+  },
+  {
+    title: '1# 退火车式窑 升温曲线 AI 寻优 + 装炉密度优化',
+    target: '1# 退火车式窑',
+    saveEnergy: '620 tce/年',
+    saveCarbon: '1630 tCO₂/年',
+    payback: '3.2 个月',
+    confidence: 'high' as const,
+    method: 'AI 工艺寻优',
+  },
+  {
+    title: '5# 去应力车式窑 台车密封气幕翻新 + 炉门缝隙补偿',
+    target: '5# 去应力车式窑',
+    saveEnergy: '420 tce/年',
+    saveCarbon: '1100 tCO₂/年',
+    payback: '4.8 个月',
+    confidence: 'medium' as const,
+    method: '炉体本体',
+  },
+  {
+    title: '全车间峰平谷电价 + 储能套利策略（辅助风机/控制系统）',
+    target: '全车间',
+    saveEnergy: '—',
+    saveCarbon: '780 tCO₂/年',
+    payback: '21 个月',
+    confidence: 'medium' as const,
+    method: '电力市场',
+  },
 ]
 
 export const devices = [
@@ -288,6 +362,80 @@ export const AI_REPORTS_SEED = [
   { id: 'AR-T-004', type: 'carbon', title: '8 台车式窑 11 月范围一二碳排分析', furnaceId: 'ALL', createdAt: '2024-11-06 14:20', size: '6.8 K 字', mode: 'pro' },
 ];
 
+/** 运营 · 告警中心 */
+export const alerts = [
+  {
+    id: 'A-2024-1142',
+    severity: 'high' as const,
+    target: '5# 去应力车式窑',
+    title: '炉内温度场偏差 +38℃，疑似前后区烧嘴失衡',
+    rule: 'ΔT(前后区) > 25℃',
+    occurred: '2024-11-08 14:23:17',
+    status: 'active' as const,
+    owner: '陈志远',
+  },
+  {
+    id: 'A-2024-1141',
+    severity: 'medium' as const,
+    target: '2# 正火车式窑',
+    title: '单位产品燃气耗 178 m³/t，超 GB 21369 限定值 6.2%',
+    rule: '单耗 > 168 m³/t',
+    occurred: '2024-11-08 13:50:02',
+    status: 'active' as const,
+    owner: '李建国',
+  },
+  {
+    id: 'A-2024-1140',
+    severity: 'medium' as const,
+    target: '4# 烧成车式窑',
+    title: '烟气余热回收换热效率下降 5.8 个百分点',
+    rule: 'η-烟气 < 62%',
+    occurred: '2024-11-08 12:18:46',
+    status: 'ack' as const,
+    owner: '赵建波',
+  },
+  {
+    id: 'A-2024-1139',
+    severity: 'low' as const,
+    target: '1# 退火车式窑',
+    title: '台车密封气幕压力偏低，建议巡检',
+    rule: 'P-气幕 < 80 Pa',
+    occurred: '2024-11-08 09:42:11',
+    status: 'closed' as const,
+    owner: '张明远',
+  },
+  {
+    id: 'A-2024-1138',
+    severity: 'high' as const,
+    target: '2# 正火车式窑',
+    title: '空燃比 1.21 超阈，残氧 O₂ 5.4% 燃烧不完全',
+    rule: 'O₂ > 4.5% 且 λ > 1.15',
+    occurred: '2024-11-08 08:11:55',
+    status: 'closed' as const,
+    owner: '李建国',
+  },
+  {
+    id: 'A-2024-1137',
+    severity: 'low' as const,
+    target: '7# 风电主轴回火车式窑',
+    title: '升温速率 92℃/h 超工艺曲线设定 80℃/h',
+    rule: 'dT/dt > 80℃/h',
+    occurred: '2024-11-07 22:30:08',
+    status: 'closed' as const,
+    owner: '孙磊',
+  },
+]
+
+/** 运营 · 统计报表历史 */
+export const reportsHistory = [
+  { id: 'R-2024-11-W2', title: '2024 年 11 月 W2 车式窑能碳周报', type: '周报', period: '2024-11-04 ~ 2024-11-10', size: '4.2 MB', createdBy: '系统', createdAt: '2024-11-11 08:00', status: 'ready' as const },
+  { id: 'R-2024-10', title: '2024 年 10 月车式窑能碳月报', type: '月报', period: '2024-10', size: '11.8 MB', createdBy: '张克强', createdAt: '2024-11-03 16:42', status: 'ready' as const },
+  { id: 'R-2024-Q3', title: '2024 Q3 热处理炉双碳合规季报', type: '季报', period: '2024-Q3', size: '23.5 MB', createdBy: '李双碳', createdAt: '2024-10-10 11:20', status: 'ready' as const },
+  { id: 'R-2024-S1', title: '2024 上半年范围一二三排放清单 (8 台车式窑)', type: '专项', period: '2024-H1', size: '8.9 MB', createdBy: '李双碳', createdAt: '2024-07-28 14:05', status: 'ready' as const },
+  { id: 'R-2024-PV', title: 'GB 21369 热处理炉节能监测专项分析', type: '专项', period: '2024 至今', size: '6.4 MB', createdBy: '王新能', createdAt: '2024-10-30 09:11', status: 'ready' as const },
+  { id: 'R-2024-NOV', title: '2024 年 11 月车式窑能碳月报（草稿生成中）', type: '月报', period: '2024-11', size: '—', createdBy: '系统', createdAt: '2024-11-08 14:25', status: 'generating' as const },
+]
+
 /**
  * ============== 低代码决策分析 / 算法 & 模型库 ==============
  */
@@ -478,3 +626,465 @@ export const FEED_DATASETS = [
 ];
 
 // 封装产物历史
+export const PACKAGE_FORMATS = [
+  { id: 'skill', name: 'AI Skill (JSON)',  ext: '.skill.json', desc: '能力中心 / Coze / Agent 调用规格',     icon: 'Sparkles',   color: 'molybdenum', size: '< 4 KB', useCase: '智能体调度' },
+  { id: 'onnx',  name: 'ONNX 模型',         ext: '.onnx',       desc: '跨平台推理标准格式，边缘 / 云通用',   icon: 'Cpu',        color: 'coolant',    size: '6 MB ~ 80 MB', useCase: '跨语言推理' },
+  { id: 'exe',   name: 'Windows EXE',       ext: '.exe',        desc: 'PyInstaller 单文件可执行，工控机离线部署', icon: 'Square', color: 'iron',       size: '60 MB ~ 200 MB', useCase: '工控机离线' },
+  { id: 'app',   name: '移动 APP',          ext: '.apk / .ipa', desc: '现场巡检 App，Android / iOS 双端',     icon: 'Smartphone', color: 'patina',     size: '20 MB ~ 60 MB',  useCase: '移动巡检' },
+  { id: 'docker',name: 'Docker 镜像',       ext: '.tar / Registry', desc: '容器化云端 / K8s 部署',           icon: 'Package',    color: 'sulfur',     size: '180 MB ~ 800 MB', useCase: '云端服务' },
+  { id: 'api',   name: 'HTTP API 服务',     ext: 'OpenAPI 3.1', desc: 'RESTful + OpenAPI 自动文档',          icon: 'Network',    color: 'molybdenum', size: '—',             useCase: '系统集成' },
+]
+
+export const PACKAGE_HISTORY = [
+  { id: 'PKG-2411-018', name: 'KilnTempLSTM30m', ver: 'v1.2.0', format: 'onnx',  baseFlow: 'wf-temp',  size: '6.8 MB', downloads: 24, exportedAt: '2024-11-08 10:14', author: '中机六院·算法组', status: 'released' },
+  { id: 'PKG-2411-017', name: 'FlameInspector',  ver: 'v3.1.0', format: 'docker',baseFlow: 'wf-flame', size: '524 MB', downloads: 12, exportedAt: '2024-11-07 16:32', author: '中机六院·视觉组', status: 'released' },
+  { id: 'PKG-2411-016', name: 'CarbonOptDaily',  ver: 'v2.0.4', format: 'skill', baseFlow: 'wf-carbon',size: '3.2 KB', downloads: 86, exportedAt: '2024-11-07 09:48', author: '中机六院·能碳组', status: 'released' },
+  { id: 'PKG-2411-015', name: 'FaultPredXGB',    ver: 'v1.3.0', format: 'exe',   baseFlow: 'wf-fault', size: '146 MB', downloads: 6,  exportedAt: '2024-11-05 14:20', author: '中机六院·算法组', status: 'released' },
+  { id: 'PKG-2411-014', name: 'PatrolApp',       ver: 'v0.9.0', format: 'app',   baseFlow: 'wf-flame', size: '38 MB',  downloads: 132, exportedAt: '2024-11-04 11:08', author: '中机六院·应用组', status: 'beta' },
+  { id: 'PKG-2411-013', name: 'EffOptAPI',       ver: 'v1.1.2', format: 'api',   baseFlow: 'wf-eff',   size: '—',      downloads: 48, exportedAt: '2024-11-02 19:50', author: '中机六院·能碳组', status: 'released' },
+]
+
+/**
+ * ============== 能流分析 Sankey ==============
+ */
+export const ENERGY_FLOW = {
+  totalGJ: 784,
+  columns: [
+    {
+      title: '能源输入',
+      nodes: [
+        { id: 'NG', name: '天然气', value: 614, color: '#FF6B35' },
+        { id: 'ELC', name: '外购电', value: 98, color: '#4A9EFF' },
+        { id: 'STM', name: '外购蒸汽', value: 33, color: '#5DD3E0' },
+        { id: 'COG', name: '焦炉煤气', value: 20, color: '#F4C430' },
+        { id: 'PV', name: '光伏绿电', value: 19, color: '#7FB069' },
+      ],
+    },
+    {
+      title: '车式窑 & 辅助',
+      nodes: [
+        { id: 'TC01', name: '1# 退火窑', value: 120, color: '#FF6B35' },
+        { id: 'TC02', name: '2# 正火窑', value: 105, color: '#FF6B35' },
+        { id: 'TC03', name: '3# 调质窑', value: 130, color: '#FF6B35' },
+        { id: 'TC04', name: '4# 烧成窑', value: 156, color: '#FF6B35' },
+        { id: 'TC05', name: '5# 去应力', value: 76, color: '#FF6B35' },
+        { id: 'TC07', name: '7# 回火窑', value: 48, color: '#FF6B35' },
+        { id: 'TC08', name: '8# 消应窑', value: 70, color: '#FF6B35' },
+        { id: 'AUX', name: '辅助 (风机/水泵/控制)', value: 79, color: '#4A9EFF' },
+      ],
+    },
+    {
+      title: '用能去向',
+      nodes: [
+        { id: 'EFFECT', name: '产品有效热', value: 286, color: '#7FB069' },
+        { id: 'STACK', name: '排烟损失', value: 218, color: '#F4C430' },
+        { id: 'WALL', name: '炉墙散热', value: 86, color: '#FF6B35' },
+        { id: 'CAR', name: '台车带走', value: 42, color: '#FF6B35' },
+        { id: 'RECO', name: '余热回收', value: 108, color: '#5DD3E0' },
+        { id: 'INCOMP', name: '不完全燃烧', value: 26, color: '#F4C430' },
+        { id: 'ELOSS', name: '电力 / 机械损耗', value: 18, color: '#4A9EFF' },
+      ],
+    },
+  ],
+  links: [
+    { source: 'NG', target: 'TC01', value: 102 },
+    { source: 'NG', target: 'TC02', value: 92 },
+    { source: 'NG', target: 'TC03', value: 110 },
+    { source: 'NG', target: 'TC04', value: 138 },
+    { source: 'NG', target: 'TC05', value: 64 },
+    { source: 'NG', target: 'TC07', value: 38 },
+    { source: 'NG', target: 'TC08', value: 60 },
+    { source: 'NG', target: 'AUX', value: 10 },
+    { source: 'ELC', target: 'TC01', value: 8 },
+    { source: 'ELC', target: 'TC02', value: 7 },
+    { source: 'ELC', target: 'TC03', value: 9 },
+    { source: 'ELC', target: 'TC04', value: 8 },
+    { source: 'ELC', target: 'TC05', value: 5 },
+    { source: 'ELC', target: 'TC07', value: 4 },
+    { source: 'ELC', target: 'TC08', value: 5 },
+    { source: 'ELC', target: 'AUX', value: 52 },
+    { source: 'STM', target: 'AUX', value: 14 },
+    { source: 'STM', target: 'TC05', value: 7 },
+    { source: 'STM', target: 'TC08', value: 5 },
+    { source: 'STM', target: 'TC02', value: 7 },
+    { source: 'COG', target: 'TC04', value: 10 },
+    { source: 'COG', target: 'TC03', value: 6 },
+    { source: 'COG', target: 'TC07', value: 4 },
+    { source: 'PV', target: 'AUX', value: 3 },
+    { source: 'PV', target: 'TC01', value: 2 },
+    { source: 'PV', target: 'TC02', value: 2 },
+    { source: 'PV', target: 'TC03', value: 2 },
+    { source: 'PV', target: 'TC04', value: 4 },
+    { source: 'PV', target: 'TC05', value: 2 },
+    { source: 'PV', target: 'TC07', value: 2 },
+    { source: 'PV', target: 'TC08', value: 2 },
+    { source: 'TC01', target: 'EFFECT', value: 44 },
+    { source: 'TC01', target: 'STACK', value: 36 },
+    { source: 'TC01', target: 'WALL', value: 14 },
+    { source: 'TC01', target: 'CAR', value: 6 },
+    { source: 'TC01', target: 'RECO', value: 16 },
+    { source: 'TC01', target: 'INCOMP', value: 2 },
+    { source: 'TC01', target: 'ELOSS', value: 2 },
+    { source: 'TC02', target: 'EFFECT', value: 38 },
+    { source: 'TC02', target: 'STACK', value: 30 },
+    { source: 'TC02', target: 'WALL', value: 12 },
+    { source: 'TC02', target: 'CAR', value: 6 },
+    { source: 'TC02', target: 'RECO', value: 14 },
+    { source: 'TC02', target: 'INCOMP', value: 3 },
+    { source: 'TC02', target: 'ELOSS', value: 2 },
+    { source: 'TC03', target: 'EFFECT', value: 50 },
+    { source: 'TC03', target: 'STACK', value: 36 },
+    { source: 'TC03', target: 'WALL', value: 14 },
+    { source: 'TC03', target: 'CAR', value: 6 },
+    { source: 'TC03', target: 'RECO', value: 18 },
+    { source: 'TC03', target: 'INCOMP', value: 3 },
+    { source: 'TC03', target: 'ELOSS', value: 3 },
+    { source: 'TC04', target: 'EFFECT', value: 56 },
+    { source: 'TC04', target: 'STACK', value: 48 },
+    { source: 'TC04', target: 'WALL', value: 18 },
+    { source: 'TC04', target: 'CAR', value: 8 },
+    { source: 'TC04', target: 'RECO', value: 18 },
+    { source: 'TC04', target: 'INCOMP', value: 5 },
+    { source: 'TC04', target: 'ELOSS', value: 3 },
+    { source: 'TC05', target: 'EFFECT', value: 28 },
+    { source: 'TC05', target: 'STACK', value: 22 },
+    { source: 'TC05', target: 'WALL', value: 8 },
+    { source: 'TC05', target: 'CAR', value: 4 },
+    { source: 'TC05', target: 'RECO', value: 10 },
+    { source: 'TC05', target: 'INCOMP', value: 2 },
+    { source: 'TC05', target: 'ELOSS', value: 2 },
+    { source: 'TC07', target: 'EFFECT', value: 18 },
+    { source: 'TC07', target: 'STACK', value: 14 },
+    { source: 'TC07', target: 'WALL', value: 6 },
+    { source: 'TC07', target: 'CAR', value: 2 },
+    { source: 'TC07', target: 'RECO', value: 6 },
+    { source: 'TC07', target: 'INCOMP', value: 1 },
+    { source: 'TC07', target: 'ELOSS', value: 1 },
+    { source: 'TC08', target: 'EFFECT', value: 26 },
+    { source: 'TC08', target: 'STACK', value: 20 },
+    { source: 'TC08', target: 'WALL', value: 8 },
+    { source: 'TC08', target: 'CAR', value: 4 },
+    { source: 'TC08', target: 'RECO', value: 8 },
+    { source: 'TC08', target: 'INCOMP', value: 2 },
+    { source: 'TC08', target: 'ELOSS', value: 2 },
+    { source: 'AUX', target: 'EFFECT', value: 26 },
+    { source: 'AUX', target: 'STACK', value: 12 },
+    { source: 'AUX', target: 'WALL', value: 6 },
+    { source: 'AUX', target: 'CAR', value: 6 },
+    { source: 'AUX', target: 'RECO', value: 18 },
+    { source: 'AUX', target: 'INCOMP', value: 8 },
+    { source: 'AUX', target: 'ELOSS', value: 3 },
+  ],
+  diagnostics: [
+    {
+      id: 'D-01',
+      target: '4# 烧成窑',
+      loss: '排烟损失 48 GJ/h',
+      pct: '31.0% of unit',
+      advice: '增设烟道蓄热回收，预热助燃风温度提升 60 ℃→ 预计节气 4.6%',
+    },
+    {
+      id: 'D-02',
+      target: '炉墙群',
+      loss: '炉墙散热 86 GJ/h',
+      pct: '11.0% of total',
+      advice: 'TC-02 / TC-04 炉门密封气幕压力偏低 0.4 kPa，优化后散热降 12%',
+    },
+    {
+      id: 'D-03',
+      target: '台车热损',
+      loss: '台车带走 42 GJ/h',
+      pct: '5.4% of total',
+      advice: '工件出炉余热回用至预热段，回收潜力 28 GJ/h',
+    },
+    {
+      id: 'D-04',
+      target: '不完全燃烧',
+      loss: '26 GJ/h',
+      pct: '3.3% of total',
+      advice: 'TC-04 残氧偏低，建议提高空燃比 0.4 → 燃烧损失↓ 38%',
+    },
+  ],
+}
+
+/**
+ * ============== 用能 & 碳排预算管理 ==============
+ */
+export const BUDGET_KPIS = {
+  energyBudgetGJ: 5_840_000,
+  energyConsumedGJ: 4_186_400,
+  carbonBudgetT: 308_400,
+  carbonConsumedT: 218_640,
+  electricBudgetMWh: 84_000,
+  electricConsumedMWh: 62_180,
+  gasBudgetWan: 18_400,
+  gasConsumedWan: 13_180,
+}
+
+export const BUDGET_DEPARTMENTS = [
+  {
+    dept: '大件铸造车间',
+    scope: 'TC-01/05',
+    eBud: 1840000,
+    eUse: 1336000,
+    cBud: 96400,
+    cUse: 70520,
+    status: 'ontrack' as const,
+  },
+  {
+    dept: '锻件热处理车间',
+    scope: 'TC-02/06',
+    eBud: 1240000,
+    eUse: 924000,
+    cBud: 64800,
+    cUse: 48360,
+    status: 'ontrack' as const,
+  },
+  {
+    dept: '精密热处理车间',
+    scope: 'TC-03/07/08',
+    eBud: 1380000,
+    eUse: 1018000,
+    cBud: 72400,
+    cUse: 53120,
+    status: 'ontrack' as const,
+  },
+  {
+    dept: '耐火材料烧成车间',
+    scope: 'TC-04',
+    eBud: 1080000,
+    eUse: 824400,
+    cBud: 56400,
+    cUse: 42120,
+    status: 'warning' as const,
+  },
+  {
+    dept: '公用 & 辅助',
+    scope: '风机/水泵/光伏储能',
+    eBud: 300000,
+    eUse: 84000,
+    cBud: 18400,
+    cUse: 4520,
+    status: 'good' as const,
+  },
+]
+
+export const BUDGET_TIMELINE = (['Q1', 'Q2', 'Q3', 'Q4'] as const).map((q, i) => ({
+  name: q,
+  能耗预算: [1460000, 1480000, 1480000, 1420000][i],
+  能耗实际: [1380000, 1402000, 1404400, 0][i],
+  碳预算: [77100, 77100, 77100, 77100][i],
+  碳实际: [72200, 74840, 71600, 0][i],
+}))
+
+export const BUDGET_ALERTS = [
+  {
+    id: 'B-001',
+    dept: '耐火材料烧成车间',
+    kpi: '燃气月预算',
+    actual: '108.4%',
+    advice: '建议 11 月限产 8% 或申请配额调整',
+  },
+  {
+    id: 'B-002',
+    dept: '精密热处理车间',
+    kpi: '电力季预算',
+    actual: '92.4%',
+    advice: '12 月需启动错峰用电 + 储能放电',
+  },
+  {
+    id: 'B-003',
+    dept: '集团范围',
+    kpi: '碳排年预算',
+    actual: '70.9%',
+    advice: '剩余 89 760 tCO₂ 可覆盖 Q4，预计 Q4 末 95%',
+  },
+]
+
+/**
+ * ============== 碳排核算 / 核查 / 产品足迹 / 供应链 / 碳资产 / 碳市场 / 政策 ==============
+ */
+
+export const HOURS_24 = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`)
+
+export const carbonTrend24h = HOURS_24.map((name, i) => {
+  const base = 14 + Math.sin((i + 2) / 24 * Math.PI * 2) * 4 + (i > 9 && i < 21 ? 3 : 0)
+  return {
+    name,
+    实际排放: +(base + Math.random() * 1.2).toFixed(2),
+    配额基线: +(17 + Math.cos(i / 12 * Math.PI) * 0.6).toFixed(2),
+    去年同期: +(base * 1.16 + Math.random() * 1.4).toFixed(2),
+  }
+})
+
+export const policies = [
+  {
+    code: 'GB 21369-2008',
+    name: '工业热处理炉节能监测',
+    level: '强制性国标',
+    issuer: '国家市场监督管理总局',
+    effective: '2008-10-01（在用，2024 修订征求意见）',
+    progress: 92,
+    status: 'inprogress' as const,
+  },
+  {
+    code: 'GB/T 17358-2009',
+    name: '热处理生产电耗、燃料消耗计算和测定方法',
+    level: '推荐性国标',
+    issuer: '全国热处理标准化技术委员会',
+    effective: '2010-04-01',
+    progress: 100,
+    status: 'done' as const,
+  },
+  {
+    code: 'GB/T 13338-2018',
+    name: '工业燃料炉热平衡测试与计算基本规则',
+    level: '推荐性国标',
+    issuer: '国家标准化管理委员会',
+    effective: '2019-04-01',
+    progress: 100,
+    status: 'done' as const,
+  },
+  {
+    code: '国发〔2021〕23号',
+    name: '2030 年前碳达峰行动方案',
+    level: '国务院文件',
+    issuer: '国务院',
+    effective: '2021-10-24',
+    progress: 62,
+    status: 'inprogress' as const,
+  },
+  {
+    code: '工信厅联节〔2024〕23号',
+    name: '工业领域碳达峰实施方案 · 机械装备行业实施细则',
+    level: '部委联合发文',
+    issuer: '工信部 / 发改委 / 生态环境部',
+    effective: '2024-06-15',
+    progress: 84,
+    status: 'inprogress' as const,
+  },
+  {
+    code: '发改环资〔2023〕1714号',
+    name: '工业重点领域能效标杆水平和基准水平（热处理炉部分）',
+    level: '部委联合发文',
+    issuer: '国家发改委 / 工信部',
+    effective: '2023-12-01',
+    progress: 78,
+    status: 'inprogress' as const,
+  },
+]
+
+export const carbonMarketTrades = [
+  { date: '2024-11-07', type: 'CEA 配额', price: 96.5, volume: 1500, dir: 'sell' as const, party: '上海环境能源交易所' },
+  { date: '2024-11-05', type: 'CCER', price: 78.2, volume: 1200, dir: 'buy' as const, party: '北京绿色交易所' },
+  { date: '2024-10-30', type: '绿电交易', price: 0.412, volume: 480000, dir: 'buy' as const, party: '国网冀北' },
+  { date: '2024-10-22', type: 'CEA 配额', price: 91.8, volume: 2400, dir: 'sell' as const, party: '上海环境能源交易所' },
+  { date: '2024-10-15', type: '绿证 I-REC', price: 36.0, volume: 360, dir: 'buy' as const, party: '国家可再生能源中心' },
+]
+
+export const MRV_PILLARS = [
+  { id: 'M', name: 'Monitoring 监测', metric: '3 842 点位', detail: '能源计量、O₂、烟温、热值 100% 在线 + 5min 入库', color: 'molybdenum' },
+  { id: 'R', name: 'Reporting 报告',  metric: '12 类台账',  detail: '燃料采购、设备能效、配额履约、绿电消纳、CCER 抵销', color: 'patina' },
+  { id: 'V', name: 'Verification 核查', metric: 'CMA + DOE', detail: '中证联合 / 必维国际 第三方核查记录可追溯', color: 'iron' },
+]
+
+export const VERIFICATION_PROCESS = [
+  { id: 1, step: '数据采集',     desc: '在线表 + 计量器具校准证书 (CMA)',           progress: 100, status: 'done' as const },
+  { id: 2, step: '排放因子核对', desc: 'GB/T 32151 + IPCC 2006 因子库版本控制',     progress: 100, status: 'done' as const },
+  { id: 3, step: '边界 & 范围', desc: '范围一/二/三划分 + 设施图边界图入档',         progress: 100, status: 'done' as const },
+  { id: 4, step: '台账归集',     desc: '12 类台账自动汇总 + 异常旁路记录',           progress: 96,  status: 'doing' as const },
+  { id: 5, step: '不确定度评估', desc: 'GUM 法 95% 置信区间，目标 ≤ 5%',            progress: 78,  status: 'doing' as const },
+  { id: 6, step: '第三方核查',   desc: 'DOE/DNV 资质机构现场审验',                  progress: 0,   status: 'pending' as const },
+  { id: 7, step: '碳排报告披露', desc: 'ESG 报告 + ISO 14064-1 兼容披露',          progress: 0,   status: 'pending' as const },
+]
+
+export const EVIDENCE_PACK = [
+  { id: 'EV-001', name: '燃料采购台账（天然气）.xlsx', period: '2024 YTD', type: 'xlsx', size: '4.6 MB', sha: 'a31c…f9d2', linked: 'L1 采集' },
+  { id: 'EV-002', name: '电表月抄表 + 校准证书.pdf',    period: '2024-Q1~Q3', type: 'pdf',  size: '12.4 MB', sha: 'b7e4…2c81', linked: 'L1 采集' },
+  { id: 'EV-003', name: '排放因子库版本变更记录.json',  period: 'v2024.10', type: 'json', size: '1.8 KB', sha: 'c4a6…d7b3', linked: 'L2 因子' },
+  { id: 'EV-004', name: '设施边界图.dwg',              period: '2024-09 终版', type: 'dwg',  size: '6.2 MB', sha: 'd1f5…ee92', linked: 'L3 边界' },
+  { id: 'EV-005', name: '不确定度评估报告_GUM.docx',    period: '2024-Q3',   type: 'docx', size: '2.4 MB', sha: 'e83b…41cd', linked: 'L5 不确定度' },
+  { id: 'EV-006', name: 'CCER 项目说明书.pdf',          period: '余热回收',   type: 'pdf',  size: '8.6 MB', sha: 'f046…7a8d', linked: 'L6 第三方' },
+  { id: 'EV-007', name: '蓄热式烧嘴改造方案.pdf',       period: '2024-08',   type: 'pdf',  size: '5.2 MB', sha: '12ac…bf73', linked: 'L7 披露' },
+]
+
+export const QUALITY_GATES = [
+  { id: 'Q1', name: '完整性（数据缺失率）',  target: '≤ 1%',  actual: '0.42%',  status: 'pass' as const },
+  { id: 'Q2', name: '一致性（核算口径）',    target: '统一 GB/T 32151',  actual: '已统一',  status: 'pass' as const },
+  { id: 'Q3', name: '准确性（不确定度）',    target: '≤ 5%',  actual: '4.2%',   status: 'pass' as const },
+  { id: 'Q4', name: '可追溯（采集→核算）',  target: '100% 血缘',  actual: '100%', status: 'pass' as const },
+  { id: 'Q5', name: '边界完整（范围1+2+3）', target: '100%',  actual: '范围三 92%', status: 'warn' as const },
+  { id: 'Q6', name: '档案保留期 ≥ 5 年',    target: '≥ 5 年',  actual: '已配置',  status: 'pass' as const },
+]
+
+export const PRODUCTS_LCA = [
+  { id: 'P-01', name: '120t 大型铸钢件 ZG270-500',  unit: '吨', pcf: 1.86, base: 2.20, prodVol: '8 640 t/y', cert: 'ISO 14067', furnace: 'TC-01', stages: { up: 0.86, prod: 0.74, down: 0.26 } },
+  { id: 'P-02', name: '风电主轴锻件 42CrMo',        unit: '件', pcf: 0.42, base: 0.58, prodVol: '24 000 件/y', cert: 'ISO 14067', furnace: 'TC-02/07', stages: { up: 0.18, prod: 0.18, down: 0.06 } },
+  { id: 'P-03', name: '核电压力容器筒节',           unit: '件', pcf: 2.84, base: 3.40, prodVol: '120 件/y', cert: 'EPD 三方', furnace: 'TC-03/08', stages: { up: 1.36, prod: 1.18, down: 0.30 } },
+  { id: 'P-04', name: '耐火砖 (高铝质)',           unit: '吨', pcf: 0.96, base: 1.20, prodVol: '32 000 t/y', cert: '内部核算', furnace: 'TC-04', stages: { up: 0.42, prod: 0.42, down: 0.12 } },
+  { id: 'P-05', name: '船用大型曲轴锻件',           unit: '件', pcf: 1.24, base: 1.64, prodVol: '420 件/y', cert: '内部核算', furnace: 'TC-06/02', stages: { up: 0.58, prod: 0.52, down: 0.14 } },
+]
+
+export const LCA_BREAKDOWN = [
+  { phase: '原材料获取', desc: '铸坯、合金、耐材、辅料 上游碳因子' },
+  { phase: '入厂运输',   desc: '陆运/水运 距离 × 燃油因子' },
+  { phase: '热处理工艺', desc: '车式窑燃气、电、蒸汽、辅料' },
+  { phase: '机加工',     desc: '机床能耗、切削液、刀具' },
+  { phase: '包装 & 出厂', desc: '包装材料 + 出厂物流' },
+  { phase: '使用阶段',   desc: '客户使用碳排（仅产品类目相关时）' },
+  { phase: '寿终处置',   desc: '回收/再制造/填埋 折算' },
+]
+
+export const SUPPLIERS = [
+  { id: 'S-01', name: '河钢承钢 · 铸坯',         tier: 'T1', cat: '原材料', share: 28.6, scope3T: 12480, ecoRating: 'A',  esgScore: 86, certs: ['ISO 14064','EPD'],      risk: 'low' as const },
+  { id: 'S-02', name: '中铝沈阳 · 合金原料',     tier: 'T1', cat: '原材料', share: 14.2, scope3T: 6840,  ecoRating: 'A-', esgScore: 82, certs: ['ISO 14064'],            risk: 'low' as const },
+  { id: 'S-03', name: '海螺水泥 · 耐火材料',     tier: 'T1', cat: '辅料',   share: 9.6,  scope3T: 4680,  ecoRating: 'B+', esgScore: 76, certs: ['LCA 报告'],              risk: 'medium' as const },
+  { id: 'S-04', name: '昆仑能源 · 天然气',       tier: 'T1', cat: '燃料',   share: 24.8, scope3T: 8640,  ecoRating: 'A',  esgScore: 88, certs: ['ISO 14064','ISO 50001'], risk: 'low' as const },
+  { id: 'S-05', name: '国家电网 · 外购电',       tier: 'T1', cat: '能源',   share: 12.4, scope3T: 5860,  ecoRating: 'A-', esgScore: 84, certs: ['绿电凭证'],              risk: 'low' as const },
+  { id: 'S-06', name: '中铁特货 · 物流',         tier: 'T1', cat: '物流',   share: 6.8,  scope3T: 3120,  ecoRating: 'B',  esgScore: 72, certs: ['ISO 14001'],            risk: 'medium' as const },
+  { id: 'S-07', name: '本地包装供应商 X3',       tier: 'T2', cat: '包装',   share: 3.6,  scope3T: 980,   ecoRating: 'B-', esgScore: 64, certs: ['—'],                    risk: 'high' as const },
+]
+
+export const SCOPE3_CATEGORIES = [
+  { name: '1. 采购商品 & 服务', value: 18920, share: 44.2 },
+  { name: '2. 资本商品',         value: 4680,  share: 10.9 },
+  { name: '3. 燃料能源相关',     value: 6840,  share: 16.0 },
+  { name: '4. 上游运输配送',     value: 3120,  share: 7.3 },
+  { name: '5. 经营废弃物',       value: 962,   share: 2.2 },
+  { name: '6. 员工差旅',         value: 642,   share: 1.5 },
+  { name: '7. 员工通勤',         value: 384,   share: 0.9 },
+  { name: '9. 下游运输',         value: 2680,  share: 6.3 },
+  { name: '11. 产品使用',        value: 3840,  share: 9.0 },
+  { name: '12. 产品寿终',        value: 768,   share: 1.7 },
+]
+
+export const CARBON_ASSETS = {
+  totalCEA: 86_400,
+  totalCCER: 12_840,
+  totalGEC: 18_600, // 绿证 张
+  netPosition: 23_640, // 净持有 tCO₂e
+  monetaryValue: 9_864_800, // 货币化 元
+}
+
+export const CARBON_ASSET_BREAKDOWN = [
+  { kind: 'CEA 配额',     held: 86400, avgCost: 78.4, marketPrice: 92.6, ytdPL: 1228000,  status: 'long' as const },
+  { kind: 'CCER 减排量',  held: 12840, avgCost: 64.8, marketPrice: 78.2, ytdPL: 172000,   status: 'long' as const },
+  { kind: '绿证 GEC',     held: 18600, avgCost: 52.0, marketPrice: 60.0, ytdPL: 148800,   status: 'long' as const },
+  { kind: 'CCER 远期合约', held: 8000,  avgCost: 72.4, marketPrice: 78.2, ytdPL: 46400,    status: 'forward' as const },
+]
+
+export const CARBON_ASSET_OPS = [
+  { date: '2024-11-08', op: '买入',  kind: 'CCER', volume: 2400, price: 78.2 as number | string, amount: 187680,  counter: '上海环境能源交易所', operator: '中机六院·能碳组' },
+  { date: '2024-11-06', op: '卖出',  kind: 'CEA',  volume: 4800, price: 92.6 as number | string, amount: 444480,  counter: '湖北碳排放权交易中心', operator: '中机六院·能碳组' },
+  { date: '2024-11-04', op: '注销',  kind: 'CCER', volume: 1200, price: '-' as number | string, amount: 0,        counter: '履约抵销 (本厂范围一)', operator: '中机六院·能碳组' },
+  { date: '2024-11-02', op: '认购',  kind: 'GEC',  volume: 3200, price: 60 as number | string,   amount: 192000,  counter: '北京绿色交易所',     operator: '中机六院·能碳组' },
+  { date: '2024-10-28', op: '买入',  kind: 'CCER 远期', volume: 8000, price: 72.4 as number | string, amount: 579200, counter: 'OTC · 大唐碳资产', operator: '中机六院·能碳组' },
+]
+
+export const ASSET_STRATEGIES = [
+  { id: 'AS-01', name: '配额履约保底', logic: '保留 CEA ≥ 预计履约缺口 110%',  status: '执行中', target: '≥ 92 K t' },
+  { id: 'AS-02', name: 'CCER 套利',    logic: 'CCER 现货折价超 10% 即买入',   status: '执行中', target: '∆ ≥ 10%' },
+  { id: 'AS-03', name: '绿证抵扣',     logic: '范围二外购电 100% 绿电覆盖',    status: '执行中', target: '100%' },
+  { id: 'AS-04', name: '远期锁定',     logic: 'Q4 锁定 8 K t CCER 远期防上行', status: '已完成', target: '8 000 t' },
+  { id: 'AS-05', name: 'ESG 披露增信', logic: '每季披露净排放 + 抵销组合',     status: '执行中', target: '季度' },
+]
