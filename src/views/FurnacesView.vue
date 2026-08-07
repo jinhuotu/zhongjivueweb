@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Flame, Search, Filter, Clock, Loader2 } from 'lucide-vue-next'
-import { Panel, PageHeader, StatusDot, Tag, KpiCard } from '@/components/ui-kit'
-import { TrendArea } from '@/components/ui-kit/charts'
+import {
+  Check,
+  History,
+  Loader2,
+  Search,
+  Send,
+  Siren,
+} from 'lucide-vue-next'
+import { PageHeader, StatusDot, Tag } from '@/components/ui-kit'
+import { TrendLine } from '@/components/ui-kit/charts'
 import { COLOR } from '@/lib/mock'
+import ScadaChrome from '@/components/production/ScadaChrome.vue'
+import CarKilnScada from '@/components/production/CarKilnScada.vue'
 import {
   type FurnaceItem,
   type ProcessSample,
@@ -24,6 +33,29 @@ function shortTime(ts: string | null | undefined) {
   return part?.slice(0, 5) || ts
 }
 
+function formatClock() {
+  const d = new Date()
+  const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} 星期${week}`
+}
+
+const SERIES_OPTIONS = [
+  { key: '温度', field: 'zoneAvgTemp' as const },
+  { key: '空燃比', field: 'afrSp' as const },
+  { key: '燃气瞬时', field: 'gasFlowInstant' as const },
+  { key: '助燃风瞬时', field: 'airFlowInstant' as const },
+  { key: '窑内压力', field: 'furnacePMeas' as const },
+  { key: '残氧', field: 'o2Meas' as const },
+]
+
+const CTRL_OPTIONS = [
+  { code: 'TEMP_SP', name: '温度设定' },
+  { code: 'AFR_SP', name: '空燃比设定' },
+  { code: 'FURNACE_P', name: '窑压设定' },
+  { code: 'O2_SP', name: '残氧设定' },
+]
+
 const router = useRouter()
 const items = ref<FurnaceItem[]>([])
 const active = ref('')
@@ -32,6 +64,18 @@ const loading = ref(true)
 const seriesLoading = ref(false)
 const error = ref<string | null>(null)
 const q = ref('')
+const seriesTag = ref('温度')
+const ctrlTag = ref('TEMP_SP')
+const ctrlValue = ref('')
+const sending = ref(false)
+const toast = ref('')
+const now = ref(formatClock())
+const commands = ref<
+  Array<{ id: string; tagCode: string; targetValue: string; status: string }>
+>([])
+const acked = ref<Set<string>>(new Set())
+
+let clockTimer: number | undefined
 
 async function loadList() {
   loading.value = true
@@ -51,15 +95,14 @@ async function loadList() {
   }
 }
 
-onMounted(() => {
-  void loadList()
-})
-
-watch(active, async (code) => {
-  if (!code) return
+async function loadSeries() {
+  if (!active.value) return
   seriesLoading.value = true
   try {
-    const series = await getFurnaceSeries(code, { stepMinutes: 10, limit: 200 })
+    const series = await getFurnaceSeries(active.value, {
+      stepMinutes: 10,
+      limit: 200,
+    })
     points.value = series.points || []
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
@@ -70,6 +113,21 @@ watch(active, async (code) => {
   } finally {
     seriesLoading.value = false
   }
+}
+
+onMounted(() => {
+  void loadList()
+  clockTimer = window.setInterval(() => {
+    now.value = formatClock()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (clockTimer) window.clearInterval(clockTimer)
+})
+
+watch(active, () => {
+  void loadSeries()
 })
 
 const filtered = computed(() => {
@@ -86,235 +144,308 @@ const filtered = computed(() => {
 const cur = computed(
   () => items.value.find((f) => f.code === active.value) || filtered.value[0] || null,
 )
-const snap = computed(() => cur.value?.snapshot)
-
-const trend = computed(() =>
-  points.value.map((p) => ({
-    name: shortTime(p.ts),
-    温度: p.zoneAvgTemp ?? p.tempSp ?? 0,
-    空燃比: p.afrSp ?? 0,
-  })),
-)
 
 const running = computed(() => items.value.filter((f) => f.status === 'running').length)
 const warning = computed(() => items.value.filter((f) => f.status === 'warning').length)
 const alarm = computed(() => items.value.filter((f) => f.status === 'alarm').length)
 
-const zoneRows = computed(() => [
-  ['一区', snap.value?.z1Temp],
-  ['二区', snap.value?.z2Temp],
-  ['三区', snap.value?.z3Temp],
-  ['四区', snap.value?.z4Temp],
-  ['五区', snap.value?.z5Temp],
-  ['六区', snap.value?.z6Temp],
-] as const)
+const chart = computed(() => {
+  const opt = SERIES_OPTIONS.find((o) => o.key === seriesTag.value) || SERIES_OPTIONS[0]
+  return points.value.map((p) => ({
+    name: shortTime(p.ts),
+    v: (p[opt.field] as number | null) ?? 0,
+  }))
+})
 
-const processRows = computed(() => [
-  ['温度设定', `${fmt(snap.value?.tempSp, 1)} ℃`],
-  ['空燃比 λ', fmt(snap.value?.afrSp, 2)],
-  ['窑内压力', `${fmt(snap.value?.furnacePMeas, 1)} Pa`],
-  ['残氧 O₂', `${fmt(snap.value?.o2Meas, 2)} %`],
-  ['燃气瞬时', `${fmt(snap.value?.gasFlowInstant, 1)} m³/h`],
-  ['助燃风瞬时', `${fmt(snap.value?.airFlowInstant, 1)} m³/h`],
-  ['燃气压力', `${fmt(snap.value?.gasPMeas, 2)} kPa`],
-  ['助燃风压力', `${fmt(snap.value?.airPMeas, 2)} kPa`],
+const chartKeys = computed(() => [
+  { key: 'v', color: COLOR.molybdenum, label: seriesTag.value },
 ])
+
+const alarms = computed(() => {
+  const list: Array<{
+    id: string
+    title: string
+    raisedAt: string
+    level: 'alarm' | 'warning'
+    status: 'active' | 'acked'
+  }> = []
+  for (const f of items.value) {
+    if (f.status !== 'alarm' && f.status !== 'warning') continue
+    const id = `furn-${f.code}`
+    list.push({
+      id,
+      title:
+        f.status === 'alarm'
+          ? `${f.name} 告警：请检查燃烧/压力回路`
+          : `${f.name} 预警：工况偏离设定`,
+      raisedAt: f.latestTs || '——',
+      level: f.status === 'alarm' ? 'alarm' : 'warning',
+      status: acked.value.has(id) ? 'acked' : 'active',
+    })
+  }
+  return list
+})
+
+const activeAlarmCount = computed(
+  () => alarms.value.filter((a) => a.status === 'active').length,
+)
+
+const panel =
+  'rounded-lg border border-border bg-card p-3 text-text-primary shadow-sm'
+const input =
+  'rounded border border-border bg-bg-surface text-text-primary text-[11px] placeholder:text-text-muted'
+
+function onRefresh() {
+  void loadList()
+  void loadSeries()
+}
+
+function ackAlarm(id: string) {
+  const next = new Set(acked.value)
+  next.add(id)
+  acked.value = next
+}
+
+async function onSend() {
+  const v = Number(ctrlValue.value)
+  if (!ctrlTag.value || Number.isNaN(v)) {
+    toast.value = '请填写有效目标值'
+    window.setTimeout(() => {
+      toast.value = ''
+    }, 2500)
+    return
+  }
+  sending.value = true
+  try {
+    await new Promise((r) => window.setTimeout(r, 400))
+    commands.value = [
+      {
+        id: `${Date.now()}`,
+        tagCode: ctrlTag.value,
+        targetValue: String(v),
+        status: 'simulated',
+      },
+      ...commands.value,
+    ].slice(0, 20)
+    toast.value = `已模拟下发 ${ctrlTag.value}=${v}`
+    ctrlValue.value = ''
+    window.setTimeout(() => {
+      toast.value = ''
+    }, 2500)
+  } finally {
+    sending.value = false
+  }
+}
 </script>
 
 <template>
-  <PageHeader
-    title="车式窑监控"
-    description="台账与历史工况联调：当前已接入 3# 窑（TC-03）2024 年 Excel 分钟数据；趋势为真实采样抽稀展示。"
-  >
-    <template #badges>
-      <Tag tone="patina">在线 {{ running }}</Tag>
-      <Tag tone="sulfur">预警 {{ warning }}</Tag>
-      <Tag tone="iron">告警 {{ alarm }}</Tag>
-      <Tag v-if="cur?.dataRange?.sampleCount != null" tone="molybdenum">
-        样本 {{ cur.dataRange.sampleCount.toLocaleString() }}
-      </Tag>
-    </template>
-    <template #actions>
-      <button
-        type="button"
-        class="h-8 px-3 inline-flex items-center gap-1.5 text-xs rounded-md border border-border hover:bg-accent"
-        @click="loadList"
+  <div class="space-y-4">
+    <PageHeader
+      title="车式窑监控"
+      description="车式窑工艺 SCADA：燃气/助燃风/排烟管线 + 分区燃烧器测点，右侧为历史回溯、模拟下发与报警。"
+    >
+      <template #badges>
+        <Tag tone="patina">在线 {{ running }}</Tag>
+        <Tag tone="sulfur">预警 {{ warning }}</Tag>
+        <Tag tone="iron">告警 {{ alarm }}</Tag>
+        <Tag v-if="cur?.dataRange?.sampleCount != null" tone="molybdenum">
+          样本 {{ cur.dataRange.sampleCount.toLocaleString() }}
+        </Tag>
+      </template>
+      <template #actions>
+        <span v-if="toast" class="font-mono text-[12px] text-patina">{{ toast }}</span>
+      </template>
+    </PageHeader>
+
+    <div
+      v-if="error"
+      class="rounded-md border border-iron/30 bg-iron/5 px-3 py-2 text-sm text-iron"
+    >
+      {{ error }}
+    </div>
+
+    <div
+      v-if="loading"
+      class="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"
+    >
+      <Loader2 class="size-4 animate-spin" />
+      加载窑台账…
+    </div>
+
+    <div
+      v-else-if="!cur"
+      class="py-16 text-center text-sm text-muted-foreground"
+    >
+      暂无窑数据。请先执行导入脚本并确认 furnaces 表有记录。
+    </div>
+
+    <div
+      v-else
+      class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"
+    >
+      <ScadaChrome
+        :title="`${cur.name} · 车式窑控制系统`"
+        :clock="now"
+        :loading="loading || seriesLoading"
+        @refresh="onRefresh"
       >
-        <Filter class="size-3.5" />刷新
-      </button>
-    </template>
-  </PageHeader>
+        <CarKilnScada :furnace="cur" :sample="cur.snapshot" />
+      </ScadaChrome>
 
-  <div
-    v-if="error"
-    class="mb-4 text-sm text-iron border border-iron/30 bg-iron/5 rounded-md px-3 py-2"
-  >
-    {{ error }}
-  </div>
-
-  <div
-    v-if="loading"
-    class="flex items-center gap-2 text-sm text-muted-foreground py-16 justify-center"
-  >
-    <Loader2 class="size-4 animate-spin" />
-    加载窑台账…
-  </div>
-
-  <div
-    v-else-if="!cur"
-    class="text-sm text-muted-foreground py-16 text-center"
-  >
-    暂无窑数据。请先执行导入脚本并确认 furnaces 表有记录。
-  </div>
-
-  <div v-else class="grid grid-cols-12 gap-5">
-    <div class="col-span-12 lg:col-span-4 xl:col-span-3">
-      <Panel title="车式窑清单" flush>
-        <div class="p-3 border-b border-border">
-          <div class="relative">
+      <div class="space-y-3">
+        <section :class="panel">
+          <div class="mb-2 text-[12px] font-medium text-molybdenum">窑炉选择</div>
+          <div class="relative mb-2">
             <Search
-              class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              class="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
             />
             <input
               v-model="q"
-              class="w-full h-8 pl-7 pr-3 bg-background border border-border rounded text-xs"
+              :class="`h-7 w-full pl-7 pr-2 ${input}`"
               placeholder="搜索编号 / 名称"
             />
           </div>
-        </div>
-        <ul class="max-h-[640px] overflow-y-auto">
-          <li
-            v-for="f in filtered"
-            :key="f.code"
-            :class="
-              f.code === active
-                ? 'px-4 py-3 cursor-pointer border-l-2 border-iron bg-iron/5'
-                : 'px-4 py-3 cursor-pointer border-l-2 border-transparent hover:bg-background/40'
-            "
-            @click="active = f.code"
-          >
-            <div class="flex items-center justify-between">
-              <div>
-                <div class="text-[10px] text-muted-foreground data-num">{{ f.code }}</div>
-                <div class="text-sm font-medium mt-0.5">{{ f.name }}</div>
+          <div class="max-h-[140px] space-y-1 overflow-y-auto">
+            <button
+              v-for="f in filtered"
+              :key="f.code"
+              type="button"
+              :class="[
+                'flex w-full items-center justify-between rounded border px-2 py-1.5 text-left transition',
+                f.code === active
+                  ? 'border-iron/40 bg-iron/10'
+                  : 'border-transparent hover:bg-bg-base',
+              ]"
+              @click="active = f.code"
+            >
+              <div class="min-w-0">
+                <div class="truncate text-[12px] font-medium">{{ f.name }}</div>
+                <div class="data-num text-[10px] text-text-muted">{{ f.code }}</div>
               </div>
               <StatusDot :status="(f.status as 'running' | 'warning' | 'alarm' | 'idle')" />
-            </div>
-            <div class="mt-1.5 text-[10px] text-muted-foreground">
-              {{ (f.type || '燃气车式窑') + ' · ' + (f.workshop || '——') }}
-            </div>
-          </li>
-        </ul>
-      </Panel>
-    </div>
-
-    <div class="col-span-12 lg:col-span-8 xl:col-span-9 space-y-5">
-      <Panel :title="`${cur.name} 设备档案`" flush>
-        <div class="p-5">
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-5">
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">设备编号</div>
-              <div class="data-num text-base font-semibold">{{ cur.code }}</div>
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">设备类型</div>
-              <div class="text-sm">{{ cur.type || '——' }}</div>
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">窑号</div>
-              <div class="data-num text-sm">{{ cur.kilnNo || '——' }}</div>
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">历史样本</div>
-              <div class="data-num text-sm">
-                {{ (cur.dataRange?.sampleCount ?? 0).toLocaleString() }} 点
-              </div>
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">所属车间</div>
-              <div class="text-sm flex items-center gap-1.5">
-                <Flame class="size-3.5 text-muted-foreground" />
-                {{ cur.workshop || '——' }}
-              </div>
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">数据区间</div>
-              <div class="text-[11px] data-num text-muted-foreground leading-relaxed">
-                {{ cur.dataRange?.startTs || '——' }}
-                <br />
-                ~ {{ cur.dataRange?.endTs || '——' }}
-              </div>
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">运行状态</div>
-              <StatusDot :status="(cur.status as 'running' | 'warning' | 'alarm' | 'idle')" />
-            </div>
-            <div>
-              <div class="text-[11px] text-muted-foreground mb-1">最新工况时刻</div>
-              <div class="text-sm flex items-center gap-1.5 text-coolant">
-                <Clock class="size-3.5" />
-                {{ cur.latestTs || '——' }}
-              </div>
-            </div>
+            </button>
           </div>
-        </div>
-      </Panel>
+        </section>
 
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="区均温度" :value="fmt(cur.temperature, 1)" unit="℃" tone="iron" />
-        <KpiCard label="天然气瞬时" :value="fmt(cur.gas, 1)" unit="m³/h" tone="molybdenum" />
-        <KpiCard label="空燃比设定" :value="fmt(cur.afr, 2)" unit="" tone="patina" />
-        <KpiCard label="CO₂/h（估）" :value="fmt(cur.co2Hourly, 3)" unit="t" tone="sulfur" />
-      </div>
-
-      <Panel
-        title="历史工况趋势"
-        :subtitle="
-          seriesLoading
-            ? '加载中…'
-            : `温度（区均）/ 空燃比 · 近端数据 step=10min · ${points.length} 点`
-        "
-      >
-        <TrendArea
-          v-if="trend.length > 0"
-          :data="trend"
-          :keys="[
-            { key: '温度', color: COLOR.iron },
-            { key: '空燃比', color: COLOR.patina },
-          ]"
-          :height="260"
-        />
-        <div v-else class="text-xs text-muted-foreground py-10 text-center">
-          暂无趋势数据
-        </div>
-      </Panel>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <Panel title="分区温度（最新样本）">
-          <div class="grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
+        <section :class="panel">
+          <div class="mb-2 flex items-center justify-between">
+            <div class="text-[12px] font-medium text-molybdenum">历史数据回溯</div>
+            <select v-model="seriesTag" :class="`h-7 px-2 ${input}`">
+              <option v-for="t in SERIES_OPTIONS" :key="t.key" :value="t.key">
+                {{ t.key }}
+              </option>
+            </select>
+          </div>
+          <div class="h-[160px]">
+            <TrendLine
+              v-if="chart.length"
+              :data="chart"
+              :keys="chartKeys"
+              :height="160"
+            />
             <div
-              v-for="[k, v] in zoneRows"
-              :key="String(k)"
-              class="flex items-center justify-between border-b border-dashed border-border pb-1.5"
+              v-else
+              class="flex h-full items-center justify-center text-[11px] text-text-muted"
             >
-              <span class="text-muted-foreground">{{ k }}</span>
-              <span class="data-num">{{ fmt(v as number | null, 1) }} ℃</span>
+              {{ seriesLoading ? '加载中…' : '暂无曲线' }}
             </div>
           </div>
-        </Panel>
+        </section>
 
-        <Panel title="工艺关键参数（最新样本）">
-          <div class="grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
+        <section :class="`${panel} space-y-2`">
+          <div class="text-[12px] font-medium text-molybdenum">操作按钮 / 模拟下发</div>
+          <select v-model="ctrlTag" :class="`h-8 w-full px-2 ${input}`">
+            <option v-for="t in CTRL_OPTIONS" :key="t.code" :value="t.code">
+              {{ t.code }} · {{ t.name }}
+            </option>
+          </select>
+          <input
+            v-model="ctrlValue"
+            placeholder="目标值"
+            :class="`h-8 w-full px-2 font-mono ${input}`"
+          />
+          <button
+            type="button"
+            class="kb-btn-primary h-8 w-full disabled:opacity-50"
+            :disabled="sending || !ctrlTag"
+            @click="onSend"
+          >
+            <Loader2 v-if="sending" class="size-3.5 animate-spin" />
+            <Send v-else class="size-3.5" />
+            模拟下发
+          </button>
+          <p class="text-[10px] text-text-muted">
+            executor=simulate；当前区均 {{ fmt(cur.temperature, 1) }} ℃ · λ
+            {{ fmt(cur.afr, 2) }}
+          </p>
+        </section>
+
+        <section :class="panel">
+          <div class="mb-2 text-[12px] font-medium text-molybdenum">
+            报警异常 · 活跃 {{ activeAlarmCount }}
+          </div>
+          <div class="max-h-[160px] space-y-1.5 overflow-y-auto">
             <div
-              v-for="([k, v], i) in processRows"
-              :key="i"
-              class="flex items-center justify-between border-b border-dashed border-border pb-1.5"
+              v-if="alarms.length === 0"
+              class="py-4 text-center text-[11px] text-text-muted"
             >
-              <span class="text-muted-foreground">{{ k }}</span>
-              <span class="data-num">{{ v }}</span>
+              暂无报警
+            </div>
+            <div
+              v-for="a in alarms"
+              :key="a.id"
+              :class="[
+                'rounded border p-2',
+                a.status === 'active'
+                  ? 'animate-pulse border-red-500/50 bg-red-500/10'
+                  : 'border-border bg-bg-base/60',
+              ]"
+            >
+              <div class="flex gap-2">
+                <Siren
+                  :class="[
+                    'mt-0.5 size-3.5',
+                    a.level === 'alarm' ? 'text-red-500' : 'text-amber-500',
+                  ]"
+                />
+                <div class="min-w-0 flex-1">
+                  <div class="text-[11px] text-text-primary">{{ a.title }}</div>
+                  <div class="text-[10px] text-text-muted">{{ a.raisedAt }}</div>
+                </div>
+                <button
+                  v-if="a.status === 'active'"
+                  type="button"
+                  class="size-6 rounded border border-border text-molybdenum hover:bg-accent"
+                  title="确认"
+                  @click="ackAlarm(a.id)"
+                >
+                  <Check class="mx-auto size-3" />
+                </button>
+              </div>
             </div>
           </div>
-        </Panel>
+        </section>
+
+        <section :class="panel">
+          <div class="mb-2 text-[12px] font-medium text-molybdenum">下发记录</div>
+          <div class="max-h-[120px] space-y-1 overflow-y-auto">
+            <div
+              v-if="commands.length === 0"
+              class="py-3 text-center text-[11px] text-text-muted"
+            >
+              暂无记录
+            </div>
+            <div
+              v-for="c in commands"
+              :key="c.id"
+              class="flex items-center gap-1.5 rounded border border-border px-1.5 py-1 font-mono text-[10px]"
+            >
+              <History class="size-3 text-text-muted" />
+              <span class="flex-1 truncate">{{ c.tagCode }}={{ c.targetValue }}</span>
+              <span class="text-patina">{{ c.status }}</span>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </div>

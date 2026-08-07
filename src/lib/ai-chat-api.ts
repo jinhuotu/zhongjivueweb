@@ -132,10 +132,15 @@ export type ToolEventPayload = {
 };
 
 export type StreamHandlers = {
-  onRefs?: (chunks: unknown[]) => void;
+  onRefs?: (chunks: unknown[], meta?: { agentId?: string; agentName?: string }) => void;
   onDelta?: (text: string) => void;
   onTool?: (payload: ToolEventPayload) => void;
-  onDone?: (payload: { ok?: boolean; title?: string; sessionId?: string }) => void;
+  onDone?: (payload: {
+    ok?: boolean;
+    title?: string;
+    sessionId?: string;
+    agentId?: string;
+  }) => void;
   onError?: (msg: string) => void;
 };
 
@@ -151,6 +156,8 @@ export async function streamChat(
     knowledgeBaseIds?: string[];
     /** 选中的提示词 publicId；未传/空 = 不注入系统提示词基座 */
     promptId?: string | null;
+    /** 场景智能体：服务端以智能体配置覆盖 mode/prompt/KB/工具 */
+    agentId?: string | null;
   },
   handlers: StreamHandlers,
   signal?: AbortSignal
@@ -158,6 +165,7 @@ export async function streamChat(
   const token = requireToken();
   const knowledgeBaseIds = (input.knowledgeBaseIds || []).filter(Boolean);
   const promptId = (input.promptId || '').trim() || undefined;
+  const agentId = (input.agentId || '').trim() || undefined;
   const res = await fetch(`${getApiBaseUrl()}/api/v1/ai/chat`, {
     method: 'POST',
     headers: {
@@ -172,6 +180,7 @@ export async function streamChat(
       knowledgeBaseIds,
       useKnowledge: knowledgeBaseIds.length > 0,
       ...(promptId ? { promptId } : {}),
+      ...(agentId ? { agentId } : {}),
     }),
     signal,
   });
@@ -219,8 +228,12 @@ export async function streamChat(
         if (!data || data.startsWith(':')) continue;
         try {
           const payload = JSON.parse(data);
-          if (event === 'refs') handlers.onRefs?.(payload.chunks || []);
-          else if (event === 'delta') handlers.onDelta?.(String(payload.text ?? ''));
+          if (event === 'refs') {
+            handlers.onRefs?.(payload.chunks || [], {
+              agentId: payload.agentId,
+              agentName: payload.agentName,
+            });
+          } else if (event === 'delta') handlers.onDelta?.(String(payload.text ?? ''));
           else if (event === 'tool') handlers.onTool?.(payload as ToolEventPayload);
           else if (event === 'done') handlers.onDone?.(payload);
           else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));

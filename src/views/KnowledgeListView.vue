@@ -3,10 +3,14 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   BookOpen,
+  Brain,
   FileText,
+  Layers,
+  Library,
   Loader2,
   Pencil,
   Plus,
+  ScrollText,
   Trash2,
   TriangleAlert,
 } from 'lucide-vue-next'
@@ -17,7 +21,10 @@ import {
   updateKnowledgeBase,
   type KnowledgeBaseItem,
 } from '@/lib/knowledge-api'
+import { libraryCardAccentByName } from '@/lib/library-card-theme'
 import { ApiError } from '@/lib/api'
+
+const KB_ICONS = [BookOpen, Library, Brain, ScrollText, Layers]
 
 function fmtAgo(ts: number) {
   const diff = Date.now() - ts
@@ -28,6 +35,14 @@ function fmtAgo(ts: number) {
   if (h < 24) return `${h} 小时前`
   const d = Math.floor(h / 24)
   return `${d} 天前`
+}
+
+function cardIcon(index: number) {
+  return KB_ICONS[index % KB_ICONS.length]!
+}
+
+function accentOf(base: KnowledgeBaseItem, index: number) {
+  return libraryCardAccentByName(base.name, index)
 }
 
 const router = useRouter()
@@ -195,11 +210,21 @@ async function confirmDelete() {
 
 <template>
   <div class="space-y-5">
-    <header>
-      <h1 class="text-xl font-semibold">知识库</h1>
-      <p class="mt-1 text-[12px] text-text-secondary">
-        自定义创建多个知识库，以卡片查看历史库；进入库内再导入资料与检索。
-      </p>
+    <header class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <div class="inline-flex items-center gap-2 mb-1.5">
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-molybdenum/25 bg-molybdenum/10 text-molybdenum text-[10px] font-mono"
+          >
+            <Brain class="size-3" />
+            AI 检索
+          </span>
+        </div>
+        <h1 class="text-xl font-semibold">知识库</h1>
+        <p class="mt-1 text-[12px] text-text-secondary">
+          自定义创建多个知识库，以卡片查看历史库；进入库内再导入资料与检索。
+        </p>
+      </div>
     </header>
 
     <div
@@ -212,21 +237,46 @@ async function confirmDelete() {
 
     <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
       <RouterLink
-        v-for="base in items"
+        v-for="(base, idx) in items"
         :key="base.id"
         :to="`/knowledge/${base.id}`"
-        class="group relative border border-hairline rounded-lg bg-bg-elevated/40 hover:border-molybdenum/50 hover:bg-bg-elevated/70 transition-colors p-4 min-h-[148px] flex flex-col"
+        :class="[
+          'group relative overflow-hidden border border-hairline rounded-xl',
+          'min-h-[160px] flex flex-col p-4 transition-all duration-200',
+          accentOf(base, idx).cardBg,
+          accentOf(base, idx).hoverBorder,
+          accentOf(base, idx).glow,
+          'hover:-translate-y-0.5',
+        ]"
       >
-        <div class="flex items-start justify-between gap-2">
-          <div class="flex items-center gap-2 min-w-0">
+        <span
+          :class="['absolute left-0 top-0 bottom-0 w-1 rounded-l-xl', accentOf(base, idx).bar]"
+        />
+        <span
+          class="pointer-events-none absolute -right-6 -top-6 size-24 rounded-full opacity-[0.12] blur-2xl"
+          :class="accentOf(base, idx).bar"
+        />
+
+        <div class="flex items-start justify-between gap-2 pl-1.5">
+          <div class="flex items-center gap-2.5 min-w-0">
             <span
-              class="size-9 rounded-md bg-molybdenum/15 text-molybdenum inline-flex items-center justify-center shrink-0"
+              :class="[
+                'size-10 rounded-lg inline-flex items-center justify-center shrink-0',
+                accentOf(base, idx).iconWrap,
+                accentOf(base, idx).icon,
+              ]"
             >
-              <BookOpen class="size-4" />
+              <component
+                :is="cardIcon(idx)"
+                class="size-4"
+              />
             </span>
             <div class="min-w-0">
               <div
-                class="text-[14px] font-medium text-text-primary truncate group-hover:text-molybdenum"
+                :class="[
+                  'text-[14px] font-semibold text-text-primary truncate transition-colors',
+                  accentOf(base, idx).hoverTitle,
+                ]"
               >
                 {{ base.name }}
               </div>
@@ -253,30 +303,49 @@ async function confirmDelete() {
               class="size-8 rounded-md text-text-muted hover:text-iron hover:bg-iron/10 inline-flex items-center justify-center"
               @click="askDelete(base, $event)"
             >
-              <Loader2 v-if="deletingId === base.id" class="size-3.5 animate-spin" />
-              <Trash2 v-else class="size-3.5" />
+              <Loader2
+                v-if="deletingId === base.id"
+                class="size-3.5 animate-spin"
+              />
+              <Trash2
+                v-else
+                class="size-3.5"
+              />
             </button>
           </div>
         </div>
-        <p class="mt-3 text-[12px] text-text-secondary line-clamp-2 flex-1">
+        <p class="mt-3 pl-1.5 text-[12px] text-text-secondary line-clamp-2 flex-1 leading-relaxed">
           {{ base.description || '暂无描述' }}
         </p>
-        <div class="mt-3 flex items-center gap-3 text-[11px] font-mono text-text-muted">
-          <span class="inline-flex items-center gap-1">
+        <div class="mt-3 pl-1.5 flex flex-wrap items-center gap-2">
+          <span
+            :class="[
+              'inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-mono',
+              accentOf(base, idx).pill,
+            ]"
+          >
             <FileText class="size-3" />
             {{ base.docCount }} 资料
           </span>
-          <span>{{ base.chunkCount }} 切块</span>
+          <span
+            :class="[
+              'inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-mono',
+              accentOf(base, idx).pill,
+            ]"
+          >
+            <Layers class="size-3" />
+            {{ base.chunkCount }} 切块
+          </span>
         </div>
       </RouterLink>
 
       <button
         type="button"
-        class="border-2 border-dashed border-hairline rounded-lg min-h-[148px] p-4 flex flex-col items-center justify-center gap-2 text-text-secondary hover:border-iron/50 hover:text-iron hover:bg-iron/5 transition-colors"
+        class="relative overflow-hidden border-2 border-dashed border-hairline rounded-xl min-h-[160px] p-4 flex flex-col items-center justify-center gap-2 text-text-secondary hover:border-molybdenum/45 hover:text-molybdenum hover:bg-molybdenum/[0.04] transition-all duration-200 hover:-translate-y-0.5"
         @click="openCreate"
       >
         <span
-          class="size-10 rounded-full border border-current/30 inline-flex items-center justify-center"
+          class="size-11 rounded-full border border-current/25 bg-bg-elevated/60 inline-flex items-center justify-center shadow-sm"
         >
           <Plus class="size-5" />
         </span>

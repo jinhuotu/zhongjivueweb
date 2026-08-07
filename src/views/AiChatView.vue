@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Send,
   Zap,
@@ -22,6 +23,7 @@ import {
   LibraryBig,
   Wrench,
   BookOpenText,
+  Bot,
 } from 'lucide-vue-next'
 import { ApiError } from '@/lib/api'
 import {
@@ -38,6 +40,7 @@ import {
   type ChatSessionItem,
   type ChatSessionMessage,
 } from '@/lib/ai-chat-api'
+import { getAgent } from '@/lib/agents-api'
 import {
   listKnowledgeBases,
   type KnowledgeBaseItem,
@@ -233,8 +236,14 @@ const toast = ref<{ type: 'ok' | 'err'; msg: string } | null>(null)
 const listRef = ref<HTMLDivElement | null>(null)
 const kbPickerRef = ref<HTMLDivElement | null>(null)
 const promptPickerRef = ref<HTMLDivElement | null>(null)
+const activeAgent = ref<{ id: string; name: string } | null>(null)
+const agentLoading = ref(false)
 let abortController: AbortController | null = null
 let toastTimer: ReturnType<typeof setTimeout> | null = null
+let applyingAgentId: string | null = null
+
+const route = useRoute()
+const router = useRouter()
 
 const useKnowledge = computed(() => selectedKbIds.value.length > 0)
 const selectedKbNames = computed(() =>
@@ -247,7 +256,7 @@ const selectedPromptName = computed(() => {
   )
 })
 const usePrompt = computed(() => Boolean(selectedPromptId.value))
-
+const agentBound = computed(() => Boolean(activeAgent.value))
 watch(messages, async () => {
   await nextTick()
   listRef.value?.scrollTo({
@@ -288,27 +297,93 @@ async function loadSessions() {
   }
 }
 
+function ensureDefaultPrompt() {
+  if (activeAgent.value) return
+  if (!selectedPromptId.value && promptList.value.length > 0) {
+    selectedPromptId.value = promptList.value[0].id
+  }
+}
+
+function clearAgentQuery() {
+  if (!('agentId' in route.query)) return
+  const next = { ...route.query }
+  delete next.agentId
+  void router.replace({ path: '/ai-chat', query: next })
+}
+
+function clearActiveAgent(opts?: { keepQuery?: boolean }) {
+  activeAgent.value = null
+  if (!opts?.keepQuery) clearAgentQuery()
+  ensureDefaultPrompt()
+}
+
+async function applyAgentById(agentId: string) {
+  const id = agentId.trim()
+  if (!id) return
+  if (applyingAgentId === id && activeAgent.value?.id === id) return
+  applyingAgentId = id
+  agentLoading.value = true
+  try {
+    const agent = await getAgent(id)
+    activeAgent.value = { id: agent.id, name: agent.name }
+    mode.value = agent.mode === 'deep' ? 'deep' : 'fast'
+    selectedPromptId.value = agent.promptId || null
+    selectedKbIds.value = [...(agent.knowledgeBaseIds || [])]
+    messages.value = []
+    const item = await createChatSession({ mode: mode.value })
+    sessions.value = [item, ...sessions.value.filter((s) => s.id !== item.id)]
+    activeSessionId.value = item.id
+    toast.value = { type: 'ok', msg: `已进入智能体「${agent.name}」` }
+  } catch (e) {
+    activeAgent.value = null
+    clearAgentQuery()
+    ensureDefaultPrompt()
+    toast.value = {
+      type: 'err',
+      msg: e instanceof Error ? e.message : '加载智能体失败',
+    }
+  } finally {
+    agentLoading.value = false
+    applyingAgentId = null
+  }
+}
+
 onMounted(() => {
-  void loadSessions()
   void (async () => {
+    await loadSessions()
     try {
       kbList.value = await listKnowledgeBases()
     } catch {
       // 未登录或接口失败时保持空列表
     }
-  })()
-  void (async () => {
     try {
       promptList.value = await listPromptOptions()
-      if (!selectedPromptId.value && promptList.value.length > 0) {
-        selectedPromptId.value = promptList.value[0].id
-      }
     } catch {
       // 未登录或接口失败时保持空列表
+    }
+    const qAgent =
+      typeof route.query.agentId === 'string' ? route.query.agentId.trim() : ''
+    if (qAgent) {
+      await applyAgentById(qAgent)
+    } else {
+      ensureDefaultPrompt()
     }
   })()
   document.addEventListener('mousedown', onDocClick)
 })
+
+watch(
+  () => route.query.agentId,
+  (raw) => {
+    const id = typeof raw === 'string' ? raw.trim() : ''
+    if (!id) {
+      if (activeAgent.value) activeAgent.value = null
+      return
+    }
+    if (activeAgent.value?.id === id) return
+    void applyAgentById(id)
+  },
+)
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocClick)
@@ -324,6 +399,7 @@ function toggleKb(id: string) {
 
 async function openSession(sessionId: string) {
   try {
+    if (activeAgent.value) clearActiveAgent()
     const item = await getChatSession(sessionId)
     activeSessionId.value = item.id
     mode.value = (item.mode as Mode) === 'deep' ? 'deep' : 'fast'
@@ -353,12 +429,6 @@ async function openSession(sessionId: string) {
       type: 'err',
       msg: e instanceof Error ? e.message : '打开会话失败',
     }
-  }
-}
-
-function ensureDefaultPrompt() {
-  if (!selectedPromptId.value && promptList.value.length > 0) {
-    selectedPromptId.value = promptList.value[0].id
   }
 }
 
@@ -506,6 +576,7 @@ async function sendQuestion(text: string) {
         sessionId,
         knowledgeBaseIds: selectedKbIds.value,
         promptId: selectedPromptId.value,
+        agentId: activeAgent.value?.id || null,
       },
       {
         onRefs: (chunks) => {
@@ -671,6 +742,7 @@ function resetCurrent() {
                 ? 'bg-iron text-white font-medium'
                 : 'text-text-secondary hover:text-text-primary'
             "
+            :disabled="agentBound"
             @click="mode = 'fast'"
           >
             <Zap class="size-3.5" /> 快速回答
@@ -683,6 +755,7 @@ function resetCurrent() {
                 ? 'bg-molybdenum text-white font-medium'
                 : 'text-text-secondary hover:text-text-primary'
             "
+            :disabled="agentBound"
             @click="mode = 'deep'"
           >
             <Brain class="size-3.5" /> 深度推理
@@ -693,11 +766,13 @@ function resetCurrent() {
           <button
             type="button"
             :title="
-              usePrompt
-                ? `已选提示词「${selectedPromptName}」`
-                : '未选提示词 = 不向大模型传系统提示词'
+              agentBound
+                ? '当前由场景智能体锁定提示词，清除智能体后可改'
+                : usePrompt
+                  ? `已选提示词「${selectedPromptName}」`
+                  : '未选提示词 = 不向大模型传系统提示词'
             "
-            :disabled="sending"
+            :disabled="sending || agentBound"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] border transition-colors disabled:opacity-40"
             :class="
               usePrompt
@@ -763,11 +838,13 @@ function resetCurrent() {
           <button
             type="button"
             :title="
-              useKnowledge
-                ? `已选 ${selectedKbNames.join('、')}，将仅在这些库中检索`
-                : '未选知识库 = 不检索；点击选择一个或多个库'
+              agentBound
+                ? '当前由场景智能体锁定知识库，清除智能体后可改'
+                : useKnowledge
+                  ? `已选 ${selectedKbNames.join('、')}，将仅在这些库中检索`
+                  : '未选知识库 = 不检索；点击选择一个或多个库'
             "
-            :disabled="sending"
+            :disabled="sending || agentBound"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] border transition-colors disabled:opacity-40"
             :class="
               useKnowledge
@@ -841,6 +918,32 @@ function resetCurrent() {
           <RotateCcw class="size-3.5" /> 清空当前
         </button>
       </div>
+    </div>
+
+    <div
+      v-if="agentLoading || activeAgent"
+      class="shrink-0 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-molybdenum/35 bg-molybdenum/10 px-3 py-2"
+    >
+      <div class="flex items-center gap-2 min-w-0 text-[12px] text-molybdenum">
+        <Loader2 v-if="agentLoading" class="size-3.5 animate-spin shrink-0" />
+        <Bot v-else class="size-3.5 shrink-0" />
+        <span class="truncate">
+          <template v-if="agentLoading">正在载入场景智能体…</template>
+          <template v-else>
+            当前智能体：<strong class="font-medium">{{ activeAgent?.name }}</strong>
+            <span class="text-text-muted ml-1.5">服务端将按该配置覆盖模式 / 提示词 / 知识库 / 工具</span>
+          </template>
+        </span>
+      </div>
+      <button
+        v-if="activeAgent && !agentLoading"
+        type="button"
+        class="inline-flex items-center gap-1 h-7 px-2 rounded-md text-[11px] border border-hairline text-text-secondary hover:text-text-primary hover:bg-bg-base/50"
+        @click="clearActiveAgent()"
+      >
+        <X class="size-3" />
+        清除智能体
+      </button>
     </div>
 
     <div class="flex-1 grid grid-cols-1 lg:grid-cols-[240px_1fr_280px] gap-4 min-h-0">

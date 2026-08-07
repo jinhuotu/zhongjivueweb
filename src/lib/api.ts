@@ -112,3 +112,97 @@ export async function apiRequest<T>(
   }
   return payload.data
 }
+
+/** 带鉴权下载二进制文件并触发浏览器保存 */
+export async function apiDownload(
+  path: string,
+  options: { token?: string | null; fallbackName?: string } = {},
+): Promise<void> {
+  const { token, fallbackName = 'download.bin' } = options
+  const headers: Record<string, string> = { Accept: '*/*' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  let res: Response
+  try {
+    res = await fetch(`${getApiBaseUrl()}${path}`, { method: 'GET', headers })
+  } catch {
+    throw new ApiError('无法连接后端服务，请确认 API 已启动', -1, 0)
+  }
+
+  if (res.status === 401 && token) {
+    const { refreshTokens, getAccessToken, clearTokens } = await import('./auth')
+    const refreshed = await refreshTokens()
+    if (refreshed) {
+      return apiDownload(path, { token: getAccessToken(), fallbackName })
+    }
+    clearTokens()
+    throw new ApiError(friendlyMessage(401), 40100, 401)
+  }
+
+  if (!res.ok) {
+    let msg = res.statusText
+    try {
+      const j = (await res.json()) as { msg?: string }
+      if (j?.msg) msg = j.msg
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(friendlyMessage(res.status, msg), -1, res.status)
+  }
+
+  const blob = await res.blob()
+  let filename = fallbackName
+  const cd = res.headers.get('Content-Disposition') || ''
+  const mStar = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(cd)
+  const m = /filename\s*=\s*"?([^";]+)"?/i.exec(cd)
+  if (mStar?.[1]) {
+    try {
+      filename = decodeURIComponent(mStar[1])
+    } catch {
+      filename = mStar[1]
+    }
+  } else if (m?.[1]) {
+    filename = m[1]
+  }
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** 带鉴权拉取二进制，返回 Blob（用于预览） */
+export async function apiFetchBlob(
+  path: string,
+  options: { token?: string | null } = {},
+): Promise<Blob> {
+  const { token } = options
+  const headers: Record<string, string> = { Accept: '*/*' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  let res: Response
+  try {
+    res = await fetch(`${getApiBaseUrl()}${path}`, { method: 'GET', headers })
+  } catch {
+    throw new ApiError('无法连接后端服务，请确认 API 已启动', -1, 0)
+  }
+
+  if (res.status === 401 && token) {
+    const { refreshTokens, getAccessToken, clearTokens } = await import('./auth')
+    const refreshed = await refreshTokens()
+    if (refreshed) {
+      return apiFetchBlob(path, { token: getAccessToken() })
+    }
+    clearTokens()
+    throw new ApiError(friendlyMessage(401), 40100, 401)
+  }
+
+  if (!res.ok) {
+    throw new ApiError(friendlyMessage(res.status, res.statusText), -1, res.status)
+  }
+  return res.blob()
+}

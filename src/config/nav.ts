@@ -56,6 +56,14 @@ import {
   BookOpenText,
   BarChart3,
   Plug,
+  Bot,
+  CalendarClock,
+  ShoppingCart,
+  Warehouse,
+  Search,
+  Camera,
+  GitBranchPlus,
+  RefreshCcw,
 } from 'lucide-vue-next'
 
 export type NavItem = {
@@ -110,10 +118,45 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/ai-chat', label: 'AI 智能问答', icon: BotMessageSquare },
       { href: '/ai-reports', label: 'AI 智能报告', icon: FileSearch },
+      { href: '/scene-agents', label: '场景智能体', icon: Sparkles, adminOnly: true },
       { href: '/model-manage', label: '模型管理', icon: Boxes, adminOnly: true },
       { href: '/prompt-manage', label: '提示词管理', icon: BookOpenText, adminOnly: true },
       { href: '/mcp-manage', label: 'MCP 管理', icon: Plug, adminOnly: true },
       { href: '/knowledge', label: '知识库', icon: LibraryBig },
+    ],
+  },
+  {
+    title: '智能体',
+    icon: Bot,
+    children: [
+      {
+        key: 'agents-core',
+        label: '核心智能体',
+        items: [
+          { href: '/agents/plan', label: '计划智能体', icon: CalendarClock },
+          { href: '/agents/procurement', label: '采购智能体', icon: ShoppingCart },
+          { href: '/agents/warehouse', label: '仓储智能体', icon: Warehouse },
+          { href: '/agents/quality-trace', label: '质量追溯智能体', icon: Search },
+          { href: '/agents/vision-inspection', label: '视觉质检智能体', icon: Camera },
+          { href: '/agents/root-cause', label: '根因分析智能体', icon: GitBranchPlus },
+          {
+            href: '/agents/quality-closed',
+            label: '质量闭环管理智能体',
+            icon: RefreshCcw,
+          },
+        ],
+      },
+      {
+        key: 'agents-ops',
+        label: '运维后台',
+        items: [
+          {
+            href: '/agents/ops-workflow',
+            label: '全量工作流管理',
+            icon: Workflow,
+          },
+        ],
+      },
     ],
   },
   {

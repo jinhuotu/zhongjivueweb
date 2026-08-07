@@ -14,22 +14,22 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="scada-root relative overflow-hidden rounded-xl border border-[#1a4a8a]/60 bg-[#041428] shadow-[inset_0_0_60px_rgba(20,80,160,0.25)]"
+    class="scada-root relative overflow-hidden rounded-xl border border-border bg-card shadow-sm"
   >
     <div
-      class="pointer-events-none absolute inset-0 opacity-40 bg-[radial-gradient(ellipse_at_top,rgba(40,120,220,0.18),transparent_55%)]"
+      class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,color-mix(in_srgb,var(--accent-molybdenum)_12%,transparent),transparent_55%)]"
     />
     <header
-      class="relative z-10 flex items-center justify-center gap-2 px-3 py-2 border-b border-[#1e5aa8]/40"
+      class="relative z-10 flex items-center justify-center gap-2 border-b border-border px-3 py-2"
     >
       <div
-        class="px-6 py-1.5 text-[15px] font-semibold tracking-widest text-[#d8ecff] bg-gradient-to-b from-[#0d3a72] to-[#071f40] border border-[#3d7fd4]/70 shadow-[0_0_18px_rgba(60,140,255,0.25)] [clip-path:polygon(8%_0,92%_0,100%_50%,92%_100%,8%_100%,0_50%)]"
+        class="border border-molybdenum/40 bg-gradient-to-b from-molybdenum/15 to-bg-elevated px-6 py-1.5 text-[15px] font-semibold tracking-widest text-text-primary shadow-sm [clip-path:polygon(8%_0,92%_0,100%_50%,92%_100%,8%_100%,0_50%)]"
       >
         {{ title }}
       </div>
       <button
         type="button"
-        class="absolute right-3 size-7 rounded border border-[#25508a]/60 text-[#8eb6e8] hover:bg-[#123560] inline-flex items-center justify-center"
+        class="absolute right-3 inline-flex size-7 items-center justify-center rounded border border-border text-text-secondary transition hover:bg-accent hover:text-foreground"
         title="刷新"
         @click="emit('refresh')"
       >
@@ -40,7 +40,7 @@ const emit = defineEmits<{
       <slot />
     </div>
     <footer
-      class="relative z-10 flex justify-end px-4 py-1.5 border-t border-[#1e5aa8]/30 text-[11px] font-mono text-[#7aa7d8]"
+      class="relative z-10 flex justify-end border-t border-border px-4 py-1.5 font-mono text-[11px] text-text-muted"
     >
       {{ clock }}
     </footer>

@@ -18,8 +18,11 @@ import {
   ZONE_XS,
 } from './tunnel-kiln-layout'
 import { num } from '@/lib/production-systems'
+import { useChartPalette } from '@/components/ui-kit/charts/theme'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, MarkLineComponent])
+
+const palette = useChartPalette()
 
 type V = Record<string, number | string | null>
 
@@ -85,76 +88,84 @@ const dropXs = computed(() =>
   profile.value.filter((p) => p.label && p.pos > 0 && p.pos < 80).map((p) => p.pos),
 )
 
-const chartOption = computed(() => ({
-  animation: false,
-  grid: { left: 36, right: 12, top: 28, bottom: 24 },
-  tooltip: {
-    trigger: 'axis' as const,
-    backgroundColor: '#0b1e38',
-    borderColor: '#2a6bb0',
-    textStyle: { color: '#e6edf3', fontSize: 11 },
-    formatter: (params: unknown) => {
-      const arr = Array.isArray(params) ? params : [params]
-      const p = arr[0] as { axisValue?: string | number; data?: number }
-      return `位置 ${p?.axisValue}<br/>温度 ${p?.data} ℃`
-    },
-  },
-  xAxis: {
-    type: 'value' as const,
-    min: 0,
-    max: 80,
-    interval: 10,
-    axisLabel: { color: '#7aa7d8', fontSize: 9 },
-    axisLine: { lineStyle: { color: 'rgba(80,140,220,0.25)' } },
-    splitLine: { show: false },
-    axisTick: { show: false },
-  },
-  yAxis: {
-    type: 'value' as const,
-    min: 0,
-    max: 1500,
-    interval: 200,
-    axisLabel: { color: '#7aa7d8', fontSize: 9 },
-    axisLine: { lineStyle: { color: 'rgba(80,140,220,0.25)' } },
-    splitLine: { lineStyle: { color: 'rgba(80,140,220,0.1)', type: 'dashed' as const } },
-    axisTick: { show: false },
-  },
-  series: [
-    {
-      type: 'line' as const,
-      data: profile.value.map((p) => [p.pos, p.t]),
-      smooth: true,
-      symbol: 'circle',
-      symbolSize: 4,
-      lineStyle: { color: '#b57bff', width: 1.8, type: 'dashed' as const },
-      itemStyle: { color: '#fff', borderColor: '#b57bff', borderWidth: 1.2 },
-      label: {
-        show: true,
-        position: 'top' as const,
-        color: '#f2f7ff',
-        fontSize: 9,
-        fontWeight: 600,
-        formatter: (p: { dataIndex: number }) => profile.value[p.dataIndex]?.label || '',
-      },
-      markLine: {
-        silent: true,
-        symbol: 'none',
-        data: [
-          {
-            yAxis: planTemp.value,
-            lineStyle: { color: 'rgba(244,196,48,0.55)', type: 'dashed' as const, width: 1 },
-            label: { show: false },
-          },
-          ...dropXs.value.map((x) => ({
-            xAxis: x,
-            lineStyle: { color: 'rgba(255,80,80,0.28)', width: 1 },
-            label: { show: false },
-          })),
-        ],
+const chartOption = computed(() => {
+  const p = palette.value
+  return {
+    animation: false,
+    grid: { left: 36, right: 12, top: 28, bottom: 24 },
+    tooltip: {
+      trigger: 'axis' as const,
+      backgroundColor: p.tooltipBg,
+      borderColor: p.tooltipBorder,
+      textStyle: { color: p.tooltipText, fontSize: 11 },
+      formatter: (params: unknown) => {
+        const arr = Array.isArray(params) ? params : [params]
+        const item = arr[0] as { axisValue?: string | number; data?: number }
+        return `位置 ${item?.axisValue}<br/>温度 ${item?.data} ℃`
       },
     },
-  ],
-}))
+    xAxis: {
+      type: 'value' as const,
+      min: 0,
+      max: 80,
+      interval: 10,
+      axisLabel: { color: p.axis, fontSize: 9 },
+      axisLine: { lineStyle: { color: p.grid } },
+      splitLine: { show: false },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value' as const,
+      min: 0,
+      max: 1500,
+      interval: 200,
+      axisLabel: { color: p.axis, fontSize: 9 },
+      axisLine: { lineStyle: { color: p.grid } },
+      splitLine: { lineStyle: { color: p.grid, type: 'dashed' as const } },
+      axisTick: { show: false },
+    },
+    series: [
+      {
+        type: 'line' as const,
+        data: profile.value.map((pt) => [pt.pos, pt.t]),
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { color: '#7c5cff', width: 1.8, type: 'dashed' as const },
+        itemStyle: { color: '#fff', borderColor: '#7c5cff', borderWidth: 1.2 },
+        label: {
+          show: true,
+          position: 'top' as const,
+          color: p.tooltipText,
+          fontSize: 9,
+          fontWeight: 600,
+          formatter: (item: { dataIndex: number }) =>
+            profile.value[item.dataIndex]?.label || '',
+        },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          data: [
+            {
+              yAxis: planTemp.value,
+              lineStyle: {
+                color: 'rgba(212,160,23,0.65)',
+                type: 'dashed' as const,
+                width: 1,
+              },
+              label: { show: false },
+            },
+            ...dropXs.value.map((x) => ({
+              xAxis: x,
+              lineStyle: { color: 'rgba(220,38,38,0.28)', width: 1 },
+              label: { show: false },
+            })),
+          ],
+        },
+      },
+    ],
+  }
+})
 
 const zones = computed(() => {
   const v = props.values
@@ -175,60 +186,60 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-lg border border-[#1e5aa8]/40 bg-[#05162c]/90">
-    <div class="border-b border-[#1e5aa8]/30 px-2 pt-2 pb-1">
-      <div class="px-1 text-[10px] text-[#7aa7d8]">温度 (℃)</div>
+  <div class="overflow-hidden rounded-lg border border-border bg-bg-surface">
+    <div class="border-b border-border px-2 pb-1 pt-2">
+      <div class="px-1 text-[10px] text-text-muted">温度 (℃)</div>
       <div class="h-[150px] md:h-[168px]">
         <VChart :option="chartOption" class="h-full w-full" autoresize />
       </div>
     </div>
 
-    <div class="relative px-2 pb-2 pt-1 space-y-2">
+    <div class="relative space-y-2 px-2 pb-2 pt-1">
       <aside
-        class="w-full rounded border border-[#2a6bb0]/45 bg-[#061830]/92 px-3 py-2 text-[10px] text-[#d8ecff] md:text-[11px]"
+        class="w-full rounded border border-border bg-bg-base px-3 py-2 text-[10px] text-text-primary md:text-[11px]"
       >
         <div
-          class="mb-1.5 flex items-center justify-between gap-2 border-b border-[#2a6bb0]/35 pb-1"
+          class="mb-1.5 flex items-center justify-between gap-2 border-b border-border pb-1"
         >
-          <span class="text-[11px] font-semibold text-cyan-200/95">当前工况</span>
-          <span class="font-mono text-[10px] text-[#7aa7d8]">
+          <span class="text-[11px] font-semibold text-molybdenum">当前工况</span>
+          <span class="font-mono text-[10px] text-text-muted">
             烧成带 C4 · 车 {{ num(values.CAR_NO, 0) }}
           </span>
         </div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-x-3 gap-y-1.5">
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-3 xl:grid-cols-6">
           <div class="min-w-0 leading-snug">
-            <div class="text-[10px] text-[#7aa7d8]">当前位置</div>
-            <div class="truncate font-mono text-[11px] text-[#d8ecff]">
+            <div class="text-[10px] text-text-muted">当前位置</div>
+            <div class="truncate font-mono text-[11px] text-text-primary">
               烧成带 C4 {{ num(values.CAR_POS, 0) }}车位
             </div>
           </div>
           <div class="min-w-0 leading-snug">
-            <div class="text-[10px] text-[#7aa7d8]">窑车编号</div>
-            <div class="truncate font-mono text-[11px] text-[#d8ecff]">
+            <div class="text-[10px] text-text-muted">窑车编号</div>
+            <div class="truncate font-mono text-[11px] text-text-primary">
               {{ num(values.CAR_NO, 0) }}
             </div>
           </div>
           <div class="min-w-0 leading-snug">
-            <div class="text-[10px] text-[#7aa7d8]">计划温度</div>
-            <div class="truncate font-mono text-[11px] text-[#d8ecff]">
+            <div class="text-[10px] text-text-muted">计划温度</div>
+            <div class="truncate font-mono text-[11px] text-text-primary">
               {{ num(values.PLAN_TEMP, 0) }}
             </div>
           </div>
           <div class="min-w-0 leading-snug">
-            <div class="text-[10px] text-[#7aa7d8]">材质</div>
-            <div class="truncate font-mono text-[11px] text-[#d8ecff]">
+            <div class="text-[10px] text-text-muted">材质</div>
+            <div class="truncate font-mono text-[11px] text-text-primary">
               高耐磨砖 / 硅莫红砖
             </div>
           </div>
           <div class="min-w-0 leading-snug">
-            <div class="text-[10px] text-[#7aa7d8]">数量</div>
-            <div class="truncate font-mono text-[11px] text-[#d8ecff]">
+            <div class="text-[10px] text-text-muted">数量</div>
+            <div class="truncate font-mono text-[11px] text-text-primary">
               {{ num(values.QTY, 0) }}
             </div>
           </div>
           <div class="min-w-0 leading-snug">
-            <div class="text-[10px] text-[#7aa7d8]">项目名称</div>
-            <div class="truncate font-mono text-[11px] text-[#d8ecff]">
+            <div class="text-[10px] text-text-muted">项目名称</div>
+            <div class="truncate font-mono text-[11px] text-text-primary">
               冀东水泥铜川有限公司
             </div>
           </div>
@@ -244,16 +255,12 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
             :style="{ left: `${z.x}%`, transform: 'translateX(-50%)' }"
           >
             <div
-              class="pointer-events-none whitespace-nowrap text-center text-[11px] font-bold leading-none md:text-[12px]"
-              style="
-                color: #ff4a4a;
-                text-shadow:
-                  0 0 1px #0a4a9a, 1px 0 0 #1a6fd4, -1px 0 0 #1a6fd4,
-                  0 1px 0 #1a6fd4, 0 -1px 0 #1a6fd4;
-              "
+              class="pointer-events-none whitespace-nowrap text-center text-[11px] font-bold leading-none text-red-500 md:text-[12px]"
             >
               {{ z.label }}
-              <span class="font-mono font-semibold text-white">{{ num(z.temp, 0) }} ℃</span>
+              <span class="font-mono font-semibold text-text-primary drop-shadow-sm">
+                {{ num(z.temp, 0) }} ℃
+              </span>
             </div>
           </div>
         </div>
@@ -266,7 +273,7 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
             :style="{ left: '1.4%', top: '55%', transform: pinTransform() }"
           >
             <div
-              class="pointer-events-none text-[10px] font-semibold tracking-[0.35em] text-[#cfe6ff]/88"
+              class="pointer-events-none text-[10px] font-semibold tracking-[0.35em] text-white/90"
               style="writing-mode: vertical-rl; text-orientation: mixed"
             >
               冷却带
@@ -277,7 +284,7 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
             :style="{ left: '98.6%', top: '55%', transform: pinTransform() }"
           >
             <div
-              class="pointer-events-none text-[10px] font-semibold tracking-[0.35em] text-[#cfe6ff]/88"
+              class="pointer-events-none text-[10px] font-semibold tracking-[0.35em] text-white/90"
               style="writing-mode: vertical-rl; text-orientation: mixed"
             >
               预热带
@@ -289,7 +296,7 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
             :style="{ left: '12%', top: '22%', transform: pinTransform() }"
           >
             <div
-              class="pointer-events-none whitespace-nowrap rounded-[2px] border border-black bg-black/90 px-1.5 py-[2px] font-mono text-[10px] leading-none text-white"
+              class="pointer-events-none whitespace-nowrap rounded-[2px] border border-border bg-card px-1.5 py-[2px] font-mono text-[10px] leading-none text-text-primary shadow-sm"
             >
               R2: {{ num(values.R2, 0) }}
             </div>
@@ -299,7 +306,7 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
             :style="{ left: '20%', top: '22%', transform: pinTransform() }"
           >
             <div
-              class="pointer-events-none whitespace-nowrap rounded-[2px] border border-black bg-black/90 px-1.5 py-[2px] font-mono text-[10px] leading-none text-white"
+              class="pointer-events-none whitespace-nowrap rounded-[2px] border border-border bg-card px-1.5 py-[2px] font-mono text-[10px] leading-none text-text-primary shadow-sm"
             >
               Kp2: {{ num(values.KP2, 2) }}
             </div>
@@ -309,7 +316,7 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
             :style="{ left: '88%', top: '16%', transform: pinTransform() }"
           >
             <div
-              class="pointer-events-none whitespace-nowrap rounded-[2px] border border-black bg-black/90 px-1.5 py-[2px] font-mono text-[10px] leading-none text-white"
+              class="pointer-events-none whitespace-nowrap rounded-[2px] border border-border bg-card px-1.5 py-[2px] font-mono text-[10px] leading-none text-text-primary shadow-sm"
             >
               Kp1: {{ num(values.KP1, 2) }}
             </div>
@@ -326,7 +333,7 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
                 width: `${BASE_SEGS[0].widthPct}%`,
               }"
             >
-              <div class="text-[10px] leading-tight text-[#9ec4ea] md:text-[11px]">
+              <div class="text-[10px] leading-tight text-[#cfe6ff]/90 md:text-[11px]">
                 助燃风温度
               </div>
               <div
@@ -344,14 +351,14 @@ function pinTransform(anchor: 'center' | 'left' | 'right' = 'center') {
               :style="{ left: `${z.x}%` }"
             >
               <div>
-                <span class="text-[#8eb6e8]">GAS:</span>
+                <span class="text-[#b8dcff]">GAS:</span>
                 <span class="text-[#ffe08a]">{{ num(z.gas, 2) }}</span>
-                <span class="text-[#7aa7d8]">m³/h</span>
+                <span class="text-[#9ec4ea]">m³/h</span>
               </div>
               <div>
-                <span class="text-[#8eb6e8]">AIR:</span>
+                <span class="text-[#b8dcff]">AIR:</span>
                 <span class="text-[#6dff6d]">{{ num(z.air, 1) }}</span>
-                <span class="text-[#7aa7d8]">m³/h</span>
+                <span class="text-[#9ec4ea]">m³/h</span>
               </div>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { apiRequest } from './api';
+import { apiDownload, apiRequest } from './api';
 import { getAccessToken } from './auth';
 
 function requireToken(): string {
@@ -87,4 +87,11 @@ export async function saveGovTaskExcel(
     { method: 'POST', token: requireToken(), body: excel }
   );
   return data.item;
+}
+
+export async function exportGovTask(id: string): Promise<void> {
+  await apiDownload(`/api/v1/governance/tasks/${encodeURIComponent(id)}/export`, {
+    token: requireToken(),
+    fallbackName: `governance-${id}.csv`,
+  });
 }

@@ -32,7 +32,7 @@ export type GovTask = {
   name: string;
   description: string;
   owner: string;
-  sourceType: 'excel' | 'opc' | 'api' | 'db';
+  sourceType: 'excel' | 'manual' | 'opc' | 'api' | 'db';
   status: GovTaskStatus;
   createdAt: string;
   updatedAt: string;
@@ -49,8 +49,8 @@ export const NEXT_WORK_STEPS: Omit<GovTaskStep, 'status'>[] = [
   },
   {
     id: 'import',
-    title: '导入 Excel',
-    description: '上传或载入已提供的样例 Excel 文件',
+    title: '导入 / 录入',
+    description: '上传 Excel，或手工录入结构化表格数据',
   },
   {
     id: 'preview',

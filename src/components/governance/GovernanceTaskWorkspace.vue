@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CircleDot,
   Clock3,
+  Download,
   Eye,
   FileSpreadsheet,
   Loader2,
@@ -29,6 +30,7 @@ import { loadProvidedSampleExcel, parseExcelBuffer } from '@/lib/excel-preview'
 import {
   createGovTask,
   deleteGovTask,
+  exportGovTask,
   listGovTasks,
   saveGovTaskExcel,
   updateGovTask,
@@ -39,6 +41,7 @@ type ViewMode = 'list' | 'create' | 'detail'
 
 const SOURCE_OPTIONS = [
   { value: 'excel', label: 'Excel 文件' },
+  { value: 'manual', label: '手工录入' },
   { value: 'opc', label: 'OPC / SCADA' },
   { value: 'api', label: 'API 接口' },
   { value: 'db', label: '业务数据库' },
@@ -115,6 +118,10 @@ const saving = ref(false)
 const deleting = ref(false)
 const pendingDelete = ref<GovTask | null>(null)
 const fileRef = ref<HTMLInputElement | null>(null)
+const exportingId = ref<string | null>(null)
+const dataTab = ref<'import' | 'manual'>('import')
+const manualHeaders = ref('点位编码,点位名称,单位,数值')
+const manualRowsText = ref('TC-01,一区温度,℃,1180\nTC-02,二区温度,℃,1250')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
 const active = computed(
@@ -305,6 +312,68 @@ function openEditMeta() {
 function triggerFilePick() {
   fileRef.value?.click()
 }
+
+async function onExport(id: string) {
+  exportingId.value = id
+  try {
+    await exportGovTask(id)
+    toast.value = '导出已开始下载'
+  } catch (e) {
+    toast.value = e instanceof Error ? e.message : '导出失败'
+  } finally {
+    exportingId.value = null
+  }
+}
+
+function parseManualTable(headersLine: string, rowsText: string): GovExcelPreview {
+  const headers = headersLine
+    .split(/[,，\t]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (headers.length === 0) {
+    throw new Error('请至少填写一列表头')
+  }
+  const rows: (string | number | null)[][] = []
+  for (const line of rowsText.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const cells = trimmed.split(/[,，\t]/).map((s) => s.trim())
+    while (cells.length < headers.length) cells.push('')
+    rows.push(cells.slice(0, headers.length).map((c) => {
+      if (c === '') return null
+      const n = Number(c)
+      return Number.isFinite(n) && c !== '' && /^-?\d+(\.\d+)?$/.test(c) ? n : c
+    }))
+  }
+  if (rows.length === 0) {
+    throw new Error('请至少录入一行数据')
+  }
+  return {
+    fileName: 'manual-entry.csv',
+    sheetName: 'Sheet1',
+    headers,
+    rows,
+    rowCount: rows.length,
+    importedAt: new Date().toISOString(),
+  }
+}
+
+async function saveManualEntry() {
+  if (!active.value) return
+  importing.value = true
+  try {
+    const preview = parseManualTable(manualHeaders.value, manualRowsText.value)
+    await pushExcel(preview)
+    // 同步来源为手工录入
+    await updateGovTask(active.value.id, { sourceType: 'manual' })
+    await refresh()
+    toast.value = `已保存手工录入（${preview.rowCount} 行）`
+  } catch (e) {
+    toast.value = e instanceof Error ? e.message : '录入保存失败'
+  } finally {
+    importing.value = false
+  }
+}
 </script>
 
 <template>
@@ -321,7 +390,7 @@ function triggerFilePick() {
   >
     <PageHeader
       title="数据治理"
-      description="新建治理任务并保存到服务器；可导入 Excel 预览。对话可引用已导入表格内容。"
+      description="新建治理任务并保存到服务器；支持 Excel 导入、手工录入与导出。对话可引用已导入表格内容。"
     >
       <template #actions>
         <div class="flex items-center gap-2">
@@ -332,14 +401,14 @@ function triggerFilePick() {
           <button
             v-if="mode !== 'list'"
             type="button"
-            class="h-8 px-3 rounded-md border border-hairline text-[12px] text-text-secondary hover:bg-bg-elevated"
+            class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10"
             @click="mode = 'list'"
           >
             返回列表
           </button>
           <button
             type="button"
-            class="h-8 px-3 rounded-md bg-iron text-[#0b0f14] text-[12px] font-medium inline-flex items-center gap-1.5"
+            class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] bg-iron text-white hover:brightness-110"
             @click="openCreate"
           >
             <Plus class="size-3.5" />
@@ -358,7 +427,7 @@ function triggerFilePick() {
       <template #action>
         <button
           type="button"
-          class="h-7 px-2.5 rounded border border-hairline text-[11px] inline-flex items-center gap-1 hover:bg-bg-elevated"
+          class="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10"
           @click="openCreate"
         >
           <Plus class="size-3" />
@@ -434,7 +503,7 @@ function triggerFilePick() {
                 <div class="inline-flex items-center gap-1.5">
                   <button
                     type="button"
-                    class="h-7 px-2.5 rounded-md border border-hairline text-[11px] inline-flex items-center gap-1 hover:border-molybdenum/50 hover:text-molybdenum"
+                    class="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10"
                     @click="openDetail(t.id)"
                   >
                     <Eye class="size-3" />
@@ -442,7 +511,23 @@ function triggerFilePick() {
                   </button>
                   <button
                     type="button"
-                    class="h-7 px-2.5 rounded-md border border-iron/35 text-[11px] text-iron inline-flex items-center gap-1 hover:bg-iron/10"
+                    :disabled="!t.excel || exportingId === t.id"
+                    class="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10 disabled:opacity-40"
+                    @click="onExport(t.id)"
+                  >
+                    <Loader2
+                      v-if="exportingId === t.id"
+                      class="size-3 animate-spin"
+                    />
+                    <Download
+                      v-else
+                      class="size-3"
+                    />
+                    导出
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] border border-iron/40 text-iron hover:bg-iron/10"
                     @click="askDelete(t.id)"
                   >
                     <Trash2 class="size-3" />
@@ -506,7 +591,7 @@ function triggerFilePick() {
         <button
           type="button"
           :disabled="saving"
-          class="h-9 px-4 rounded-md bg-iron text-[#0b0f14] text-[13px] font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+          class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[13px] bg-iron text-white hover:brightness-110 disabled:opacity-50"
           @click="saveDraft"
         >
           <Loader2
@@ -521,7 +606,7 @@ function triggerFilePick() {
         </button>
         <button
           type="button"
-          class="h-9 px-4 rounded-md border border-hairline text-[13px] inline-flex items-center gap-1.5"
+          class="inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-[13px] border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10"
           @click="mode = 'list'"
         >
           <X class="size-3.5" />
@@ -541,14 +626,32 @@ function triggerFilePick() {
           {{ fmtTime(active.updatedAt) }}
         </template>
         <template #action>
-          <button
-            type="button"
-            class="h-7 px-2.5 rounded border border-hairline text-[11px] inline-flex items-center gap-1"
-            @click="openEditMeta"
-          >
-            <Save class="size-3" />
-            编辑并保存
-          </button>
+          <div class="flex items-center gap-1.5">
+            <button
+              type="button"
+              :disabled="!active.excel || exportingId === active.id"
+              class="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10 disabled:opacity-40"
+              @click="onExport(active.id)"
+            >
+              <Loader2
+                v-if="exportingId === active.id"
+                class="size-3 animate-spin"
+              />
+              <Download
+                v-else
+                class="size-3"
+              />
+              导出
+            </button>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] bg-iron text-white hover:brightness-110"
+              @click="openEditMeta"
+            >
+              <Save class="size-3" />
+              编辑并保存
+            </button>
+          </div>
         </template>
 
         <p class="text-[12px] text-text-secondary mb-3">
@@ -605,9 +708,36 @@ function triggerFilePick() {
 
       <div class="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
         <Panel
-          title="导入 Excel"
-          subtitle="支持平台样例或本地上传，仅预览不清洗"
+          title="数据导入"
+          subtitle="Excel 上传或手工录入，仅预览不清洗"
         >
+          <div class="flex gap-1 border-b border-hairline mb-3">
+            <button
+              type="button"
+              class="px-3 py-1.5 -mb-px text-[11px] border-b-2 transition-colors"
+              :class="
+                dataTab === 'import'
+                  ? 'border-iron text-text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
+              "
+              @click="dataTab = 'import'"
+            >
+              导入 Excel
+            </button>
+            <button
+              type="button"
+              class="px-3 py-1.5 -mb-px text-[11px] border-b-2 transition-colors"
+              :class="
+                dataTab === 'manual'
+                  ? 'border-iron text-text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
+              "
+              @click="dataTab = 'manual'"
+            >
+              信息录入
+            </button>
+          </div>
+
           <input
             ref="fileRef"
             type="file"
@@ -615,7 +745,11 @@ function triggerFilePick() {
             class="hidden"
             @change="onFileChange"
           >
-          <div class="space-y-2">
+
+          <div
+            v-if="dataTab === 'import'"
+            class="space-y-2"
+          >
             <button
               type="button"
               :disabled="importing"
@@ -635,7 +769,7 @@ function triggerFilePick() {
             <button
               type="button"
               :disabled="importing"
-              class="w-full h-9 rounded-md border border-hairline text-[12px] inline-flex items-center justify-center gap-1.5 hover:bg-bg-elevated disabled:opacity-50"
+              class="w-full h-9 rounded-md border border-molybdenum/40 text-molybdenum text-[12px] inline-flex items-center justify-center gap-1.5 hover:bg-molybdenum/10 disabled:opacity-50"
               @click="triggerFilePick"
             >
               <Upload class="size-3.5" />
@@ -647,7 +781,7 @@ function triggerFilePick() {
             >
               <div class="flex items-center gap-1.5 text-patina">
                 <Check class="size-3.5" />
-                已导入，可打开查看
+                已导入，可打开查看 / 导出
               </div>
               <div class="font-mono text-text-secondary break-all">
                 {{ active.excel.fileName }}
@@ -663,6 +797,43 @@ function triggerFilePick() {
             >
               尚未导入文件。可先载入样例，再在右侧表格中查看。
             </p>
+          </div>
+
+          <div
+            v-else
+            class="space-y-3"
+          >
+            <label class="block space-y-1">
+              <span class="text-[11px] text-text-muted">表头（逗号分隔）</span>
+              <input
+                v-model="manualHeaders"
+                class="w-full h-8 px-2 rounded-md border border-hairline bg-bg-base text-[12px] font-mono"
+              >
+            </label>
+            <label class="block space-y-1">
+              <span class="text-[11px] text-text-muted">数据行（每行一条，逗号分隔）</span>
+              <textarea
+                v-model="manualRowsText"
+                rows="6"
+                class="w-full px-2 py-1.5 rounded-md border border-hairline bg-bg-base text-[12px] font-mono resize-y"
+              />
+            </label>
+            <button
+              type="button"
+              :disabled="importing"
+              class="w-full h-9 rounded-md bg-iron text-white text-[12px] inline-flex items-center justify-center gap-1.5 hover:brightness-110 disabled:opacity-50"
+              @click="saveManualEntry"
+            >
+              <Loader2
+                v-if="importing"
+                class="size-3.5 animate-spin"
+              />
+              <Save
+                v-else
+                class="size-3.5"
+              />
+              保存录入
+            </button>
           </div>
         </Panel>
 
