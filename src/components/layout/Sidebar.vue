@@ -15,7 +15,9 @@ const auth = useAuthStore()
 const tabs = useTabsStore()
 const mobileMenu = useMobileMenuStore()
 
-const navGroups = computed(() => filterNavGroups(NAV_GROUPS, auth.isAdmin))
+const navGroups = computed(() =>
+  filterNavGroups(NAV_GROUPS, auth.isAdmin, auth.menus),
+)
 
 const expanded = ref<Record<string, boolean>>({})
 const inited = ref(false)

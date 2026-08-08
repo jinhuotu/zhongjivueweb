@@ -17,6 +17,8 @@ export const useAuthStore = defineStore('auth', () => {
     Boolean(user.value?.is_superuser || user.value?.roles?.includes('admin')),
   )
 
+  const menus = computed(() => user.value?.menus ?? [])
+
   async function bootstrap() {
     const token = getAccessToken()
     if (!token) {
@@ -44,5 +46,5 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
-  return { user, loading, isAdmin, bootstrap, login, logout }
+  return { user, loading, isAdmin, menus, bootstrap, login, logout }
 })

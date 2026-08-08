@@ -71,6 +71,8 @@ export type NavItem = {
   label: string
   icon: Component
   adminOnly?: boolean
+  /** 若设置，仅当用户 menus 包含该 href（或管理员）时可见；未设置则按 adminOnly / menus 通用规则 */
+  requireMenu?: boolean
 }
 
 export type NavChild = {
@@ -86,14 +88,29 @@ export type NavGroup = {
   children?: NavChild[]
 }
 
-export function filterNavGroups(groups: NavGroup[], admin: boolean): NavGroup[] {
+function canSeeNavItem(
+  it: NavItem,
+  admin: boolean,
+  menus: string[] | null | undefined,
+): boolean {
+  if (it.adminOnly && !admin) return false
+  // menus 为空：兼容旧登录态，仅按 adminOnly
+  if (!menus || menus.length === 0) return true
+  return menus.includes(it.href)
+}
+
+export function filterNavGroups(
+  groups: NavGroup[],
+  admin: boolean,
+  menus?: string[] | null,
+): NavGroup[] {
   return groups
     .map((g) => ({
       ...g,
-      items: g.items?.filter((it) => (it.adminOnly ? admin : true)),
+      items: g.items?.filter((it) => canSeeNavItem(it, admin, menus)),
       children: g.children?.map((c) => ({
         ...c,
-        items: c.items.filter((it) => (it.adminOnly ? admin : true)),
+        items: c.items.filter((it) => canSeeNavItem(it, admin, menus)),
       })),
     }))
     .filter(
@@ -101,6 +118,32 @@ export function filterNavGroups(groups: NavGroup[], admin: boolean): NavGroup[] 
         (g.items && g.items.length > 0) ||
         (g.children && g.children.some((c) => c.items.length > 0)),
     )
+}
+
+/** 路由守卫：根据 nav 配置判断是否 adminOnly */
+export function isAdminOnlyPath(path: string): boolean {
+  return flattenNavItems().some((it) => it.href === path && Boolean(it.adminOnly))
+}
+
+export function canAccessPath(
+  path: string,
+  admin: boolean,
+  menus?: string[] | null,
+): boolean {
+  if (admin) return true
+  // /workflows/:id 等：父级 adminOnly 时非管理员不可进
+  const adminParent = flattenNavItems().find(
+    (it) =>
+      Boolean(it.adminOnly) &&
+      (path === it.href || (it.href !== '/' && path.startsWith(`${it.href}/`))),
+  )
+  if (adminParent) return false
+
+  const exact = flattenNavItems().find((it) => it.href === path)
+  if (exact) return canSeeNavItem(exact, admin, menus)
+  // 详情页前缀
+  if (!menus || menus.length === 0) return true
+  return menus.some((m) => m !== '/' && (path === m || path.startsWith(`${m}/`)))
 }
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -119,6 +162,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/ai-chat', label: 'AI 智能问答', icon: BotMessageSquare },
       { href: '/ai-reports', label: 'AI 智能报告', icon: FileSearch },
       { href: '/scene-agents', label: '场景智能体', icon: Sparkles, adminOnly: true },
+      { href: '/workflows', label: '工作流', icon: Workflow, adminOnly: true },
       { href: '/model-manage', label: '模型管理', icon: Boxes, adminOnly: true },
       { href: '/prompt-manage', label: '提示词管理', icon: BookOpenText, adminOnly: true },
       { href: '/mcp-manage', label: 'MCP 管理', icon: Plug, adminOnly: true },
@@ -181,7 +225,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/production/tunnel', label: '隧道窑管理', icon: Flame },
       { href: '/production/batching', label: '配料管理', icon: Boxes },
-      { href: '/production/shuttle', label: '梭式窑管理', icon: CloudCog },
+      { href: '/production/shuttle', label: '梭式窑烟气', icon: CloudCog },
       { href: '/furnaces', label: '车式窑监控', icon: Flame },
       { href: '/devices', label: '设备资产', icon: Cpu },
     ],
