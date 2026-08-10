@@ -165,7 +165,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/workflows', label: '工作流', icon: Workflow, adminOnly: true },
       { href: '/model-manage', label: '模型管理', icon: Boxes, adminOnly: true },
       { href: '/prompt-manage', label: '提示词管理', icon: BookOpenText, adminOnly: true },
-      { href: '/mcp-manage', label: 'MCP 管理', icon: Plug, adminOnly: true },
+      { href: '/mcp-manage', label: '工具管理', icon: Plug, adminOnly: true },
       { href: '/knowledge', label: '知识库', icon: LibraryBig },
     ],
   },

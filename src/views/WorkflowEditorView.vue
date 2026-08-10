@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { VueFlow, type Connection, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -9,11 +9,15 @@ import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import {
   ArrowLeft,
+  Check,
   Loader2,
+  Pencil,
   Play,
   Plus,
   Save,
+  Trash2,
   Upload,
+  X,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { listAgents, type AgentItem } from '@/lib/agents-api'
@@ -56,6 +60,7 @@ const item = ref<WorkflowItem | null>(null)
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
 const selectedId = ref<string | null>(null)
+const selectedEdgeId = ref<string | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const publishing = ref(false)
@@ -63,6 +68,9 @@ const running = ref(false)
 const error = ref('')
 const toast = ref('')
 const nameEdit = ref('')
+const nameEditing = ref(false)
+const nameSaving = ref(false)
+const nameInputRef = ref<HTMLInputElement | null>(null)
 const trialInput = ref('窑炉当前工况是否正常？请结合知识库简要回答。')
 const runLog = ref<string[]>([])
 const runOutput = ref('')
@@ -73,6 +81,16 @@ const agents = ref<AgentItem[]>([])
 const mcpServers = ref<McpServerItem[]>([])
 
 const selected = computed(() => nodes.value.find((n) => n.id === selectedId.value) || null)
+
+const selectedNodeType = computed(() => {
+  const t = (selected.value?.data as { nodeType?: string } | undefined)?.nodeType
+  return (t || '') as WorkflowNodeType | ''
+})
+
+const canDeleteSelected = computed(() => {
+  if (!selected.value) return false
+  return selectedNodeType.value !== 'start' && selectedNodeType.value !== 'end'
+})
 
 const toolOptions = computed(() => {
   const out: { id: string; label: string }[] = []
@@ -168,6 +186,7 @@ async function loadAll() {
     nodes.value = toFlowNodes(graph)
     edges.value = toFlowEdges(graph)
     selectedId.value = null
+    selectedEdgeId.value = null
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -177,6 +196,61 @@ async function loadAll() {
 
 function onNodeClick(ev: { node: Node }) {
   selectedId.value = ev.node.id
+  selectedEdgeId.value = null
+}
+
+function onEdgeClick(ev: { edge: Edge }) {
+  selectedEdgeId.value = ev.edge.id
+  selectedId.value = null
+}
+
+function onPaneClick() {
+  selectedId.value = null
+  selectedEdgeId.value = null
+}
+
+function removeSelectedNode() {
+  const n = selected.value
+  if (!n) return
+  const ntype = String((n.data as { nodeType?: string })?.nodeType || '')
+  if (ntype === 'start' || ntype === 'end') {
+    error.value = '开始 / 结束节点不可删除'
+    return
+  }
+  const id = n.id
+  nodes.value = nodes.value.filter((x) => x.id !== id)
+  edges.value = edges.value.filter((e) => e.source !== id && e.target !== id)
+  selectedId.value = null
+  error.value = ''
+}
+
+function removeSelectedEdge() {
+  if (!selectedEdgeId.value) return
+  const id = selectedEdgeId.value
+  edges.value = edges.value.filter((e) => e.id !== id)
+  selectedEdgeId.value = null
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (target.isContentEditable) return true
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
+function onEditorKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return
+  if (nameEditing.value || isTypingTarget(e.target)) return
+  if (selectedId.value) {
+    e.preventDefault()
+    removeSelectedNode()
+    return
+  }
+  if (selectedEdgeId.value) {
+    e.preventDefault()
+    removeSelectedEdge()
+  }
 }
 
 function onArgsChange(raw: string) {
@@ -224,12 +298,52 @@ function toggleKb(id: string) {
   updateSelectedData('knowledgeBaseIds', next)
 }
 
+async function startRename() {
+  if (loading.value || nameSaving.value) return
+  nameEdit.value = item.value?.name || nameEdit.value
+  nameEditing.value = true
+  await nextTick()
+  nameInputRef.value?.focus()
+  nameInputRef.value?.select()
+}
+
+function cancelRename() {
+  nameEdit.value = item.value?.name || ''
+  nameEditing.value = false
+}
+
+async function commitRename() {
+  const next = nameEdit.value.trim()
+  if (!next) {
+    error.value = '工作流名称不能为空'
+    return
+  }
+  if (next === item.value?.name) {
+    nameEditing.value = false
+    return
+  }
+  nameSaving.value = true
+  error.value = ''
+  try {
+    item.value = await updateWorkflow(workflowId.value, { name: next })
+    nameEdit.value = item.value.name
+    nameEditing.value = false
+    toast.value = '名称已更新'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '重命名失败'
+  } finally {
+    nameSaving.value = false
+  }
+}
+
 async function onSave() {
   saving.value = true
   error.value = ''
   toast.value = ''
   try {
-    if (nameEdit.value.trim() && nameEdit.value !== item.value?.name) {
+    if (nameEditing.value) {
+      await commitRename()
+    } else if (nameEdit.value.trim() && nameEdit.value !== item.value?.name) {
       item.value = await updateWorkflow(workflowId.value, { name: nameEdit.value.trim() })
     }
     item.value = await saveWorkflowGraph(workflowId.value, exportGraph())
@@ -313,10 +427,15 @@ watch(
 )
 
 onMounted(async () => {
+  window.addEventListener('keydown', onEditorKeydown)
   if (auth.isAdmin) {
     await loadAll()
     await nextTick()
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onEditorKeydown)
 })
 </script>
 
@@ -327,42 +446,93 @@ onMounted(async () => {
   </div>
 
   <div v-else class="flex flex-col h-[calc(100vh-7rem)] min-h-[560px]">
-    <div class="flex flex-wrap items-center gap-2 mb-3">
+    <div class="flex flex-wrap items-center gap-3 mb-3">
       <button
         type="button"
-        class="h-8 px-2 inline-flex items-center gap-1 text-xs rounded-md border border-border hover:bg-accent"
+        class="h-9 px-2.5 inline-flex items-center gap-1 text-xs rounded-md border border-border hover:bg-accent shrink-0"
         @click="router.push('/workflows')"
       >
         <ArrowLeft class="size-3.5" />返回
       </button>
-      <input
-        v-model="nameEdit"
-        class="h-8 px-2 text-sm rounded-md border border-border bg-background min-w-[200px]"
-      />
-      <span class="text-[10px] text-muted-foreground">
-        草稿 v{{ item?.draftVersion?.version ?? '—' }}
-        · 已发布
-        {{ item?.publishedVersion ? `v${item.publishedVersion.version}` : '无' }}
-      </span>
-      <div class="flex-1" />
-      <button
-        type="button"
-        class="h-8 px-3 inline-flex items-center gap-1.5 text-xs rounded-md border border-border hover:bg-accent disabled:opacity-50"
-        :disabled="saving || loading"
-        @click="onSave"
-      >
-        <Loader2 v-if="saving" class="size-3.5 animate-spin" />
-        <Save v-else class="size-3.5" />
-        保存草稿
-      </button>
-      <button
-        type="button"
-        class="h-8 px-3 inline-flex items-center gap-1.5 text-xs rounded-md border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10 disabled:opacity-50"
-        :disabled="publishing || loading"
-        @click="onPublish"
-      >
-        <Upload class="size-3.5" />发布
-      </button>
+
+      <div class="min-w-0 flex-1 flex flex-col gap-0.5">
+        <div class="text-[10px] uppercase tracking-wide text-muted-foreground">工作流名称</div>
+        <div v-if="nameEditing" class="flex items-center gap-1.5 min-w-0">
+          <input
+            ref="nameInputRef"
+            v-model="nameEdit"
+            maxlength="128"
+            placeholder="输入工作流名称"
+            class="h-9 px-2.5 text-[15px] font-semibold rounded-md border border-molybdenum/50 bg-background text-foreground outline-none focus:ring-2 focus:ring-molybdenum/30 min-w-[220px] max-w-full w-[min(420px,100%)]"
+            :disabled="nameSaving"
+            @keydown.enter.prevent="commitRename()"
+            @keydown.escape.prevent="cancelRename()"
+          />
+          <button
+            type="button"
+            title="确认"
+            class="size-9 rounded-md border border-patina/40 text-patina hover:bg-patina/10 inline-flex items-center justify-center disabled:opacity-50"
+            :disabled="nameSaving"
+            @click="commitRename()"
+          >
+            <Loader2 v-if="nameSaving" class="size-3.5 animate-spin" />
+            <Check v-else class="size-4" />
+          </button>
+          <button
+            type="button"
+            title="取消"
+            class="size-9 rounded-md border border-border text-muted-foreground hover:bg-accent inline-flex items-center justify-center"
+            :disabled="nameSaving"
+            @click="cancelRename()"
+          >
+            <X class="size-4" />
+          </button>
+        </div>
+        <button
+          v-else
+          type="button"
+          class="group inline-flex items-center gap-2 max-w-full text-left rounded-md px-1 -mx-1 py-0.5 hover:bg-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-molybdenum/40"
+          title="点击修改名称"
+          :disabled="loading"
+          @click="startRename()"
+        >
+          <span class="text-[15px] font-semibold text-foreground truncate">
+            {{ item?.name || nameEdit || '未命名工作流' }}
+          </span>
+          <span
+            class="inline-flex items-center gap-1 shrink-0 text-[11px] text-molybdenum opacity-80 group-hover:opacity-100"
+          >
+            <Pencil class="size-3.5" />
+            重命名
+          </span>
+        </button>
+        <div class="text-[10px] text-muted-foreground">
+          草稿 v{{ item?.draftVersion?.version ?? '—' }}
+          · 已发布
+          {{ item?.publishedVersion ? `v${item.publishedVersion.version}` : '无' }}
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          class="h-9 px-3 inline-flex items-center gap-1.5 text-xs rounded-md border border-border hover:bg-accent disabled:opacity-50"
+          :disabled="saving || loading"
+          @click="onSave"
+        >
+          <Loader2 v-if="saving" class="size-3.5 animate-spin" />
+          <Save v-else class="size-3.5" />
+          保存草稿
+        </button>
+        <button
+          type="button"
+          class="h-9 px-3 inline-flex items-center gap-1.5 text-xs rounded-md border border-molybdenum/40 text-molybdenum hover:bg-molybdenum/10 disabled:opacity-50"
+          :disabled="publishing || loading"
+          @click="onPublish"
+        >
+          <Upload class="size-3.5" />发布
+        </button>
+      </div>
     </div>
 
     <p v-if="error" class="mb-2 text-xs text-iron">{{ error }}</p>
@@ -386,7 +556,7 @@ onMounted(async () => {
           <Plus class="size-3 inline mr-1" />{{ NODE_META[t].label }}
         </button>
         <p class="text-[10px] text-muted-foreground px-1 pt-2 leading-relaxed">
-          从开始连到结束。多出边时试跑仅走第一条。
+          从开始连到结束。选中中间节点后可删除（或按 Delete）；连线同理。开始/结束不可删。
         </p>
       </aside>
 
@@ -397,7 +567,10 @@ onMounted(async () => {
           v-model:edges="edges"
           fit-view-on-init
           :default-viewport="{ zoom: 1 }"
+          :delete-key-code="null"
           @node-click="onNodeClick"
+          @edge-click="onEdgeClick"
+          @pane-click="onPaneClick"
           @connect="onConnect"
         >
           <Background />
@@ -408,8 +581,40 @@ onMounted(async () => {
       <!-- inspector + trial -->
       <aside class="col-span-4 flex flex-col gap-3 min-h-0 overflow-hidden">
         <div class="rounded-md border border-border p-3 overflow-auto max-h-[45%]">
-          <div class="text-xs font-medium mb-2">节点属性</div>
-          <div v-if="!selected" class="text-[11px] text-muted-foreground">点击画布节点进行配置</div>
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div class="text-xs font-medium">节点属性</div>
+            <button
+              v-if="selected && canDeleteSelected"
+              type="button"
+              class="h-7 px-2 inline-flex items-center gap-1 text-[11px] rounded-md border border-iron/40 text-iron hover:bg-iron/10"
+              title="删除该节点（Delete）"
+              @click="removeSelectedNode()"
+            >
+              <Trash2 class="size-3" />
+              删除节点
+            </button>
+          </div>
+          <div
+            v-if="!selected && selectedEdgeId"
+            class="space-y-2 text-xs"
+          >
+            <p class="text-[11px] text-muted-foreground">已选中一条连线。</p>
+            <button
+              type="button"
+              class="h-7 px-2 inline-flex items-center gap-1 text-[11px] rounded-md border border-iron/40 text-iron hover:bg-iron/10"
+              title="删除连线（Delete）"
+              @click="removeSelectedEdge()"
+            >
+              <Trash2 class="size-3" />
+              删除连线
+            </button>
+          </div>
+          <div
+            v-else-if="!selected"
+            class="text-[11px] text-muted-foreground"
+          >
+            点击画布节点进行配置；选中后可删除（开始/结束除外）。
+          </div>
           <div v-else class="space-y-2 text-xs">
             <div>
               类型：
@@ -417,6 +622,12 @@ onMounted(async () => {
                 {{ NODE_META[(selected.data as any).nodeType as WorkflowNodeType]?.label || (selected.data as any).nodeType }}
               </span>
             </div>
+            <p
+              v-if="!canDeleteSelected"
+              class="text-[10px] text-muted-foreground"
+            >
+              开始 / 结束节点为流程锚点，不可删除。
+            </p>
 
             <template v-if="(selected.data as any).nodeType === 'knowledge'">
               <label class="block text-[11px] text-muted-foreground">知识库</label>

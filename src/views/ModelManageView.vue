@@ -265,8 +265,8 @@ function onDeleteOpen(v: boolean) {
           模型管理
         </h1>
         <p class="mt-1 text-[12px] text-text-secondary">
-          配置 OpenAI 兼容的对话模型与 Embedding 模型。页面配置优先，不再依赖 .env。
-          Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度可分别绑定）。
+配置 OpenAI 兼容的对话模型与 Embedding 模型。
+Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度可分别绑定）。
         </p>
       </div>
       <div class="flex gap-2">

@@ -23,11 +23,21 @@ export type AiReportItem = {
   size: string;
   refsCount: number;
   errorMsg?: string | null;
+  workflowId?: string | null;
+  workflowRunId?: string | null;
   createdAt: number;
   updatedAt: number;
   content?: string;
   refs?: { content: string; score: number; doc_id?: string }[];
   contextSummary?: string | null;
+};
+
+export type PublishedWorkflowOption = {
+  id: string;
+  name: string;
+  remark?: string | null;
+  domain?: string;
+  publishedVersion?: number;
 };
 
 function requireToken(): string {
@@ -81,22 +91,35 @@ export type ReportStreamHandlers = {
     mode?: string;
     refs?: number;
     hasSamples?: boolean;
+    workflowId?: string | null;
   }) => void;
+  onStep?: (event: 'step_start' | 'step_end', payload: Record<string, unknown>) => void;
   onDelta?: (text: string) => void;
   onDone?: (payload: {
     ok?: boolean;
     reportId?: string;
     title?: string;
     charCount?: number;
+    workflowId?: string | null;
+    workflowRunId?: string | null;
   }) => void;
   onError?: (msg: string) => void;
 };
+
+export async function listPublishedWorkflows(): Promise<PublishedWorkflowOption[]> {
+  const data = await apiRequest<{ items: PublishedWorkflowOption[] }>(
+    '/api/v1/workflows/options',
+    { token: requireToken() },
+  );
+  return data.items || [];
+}
 
 export async function streamGenerateReport(
   input: {
     type: ReportType;
     furnaceId: string;
     mode: ReportMode;
+    workflowId?: string | null;
   },
   handlers: ReportStreamHandlers,
   signal?: AbortSignal
@@ -113,6 +136,7 @@ export async function streamGenerateReport(
       type: input.type,
       furnaceId: input.furnaceId,
       mode: input.mode,
+      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
     }),
     signal,
   });
@@ -152,6 +176,8 @@ export async function streamGenerateReport(
       try {
         const payload = JSON.parse(data);
         if (event === 'meta') handlers.onMeta?.(payload);
+        else if (event === 'step_start' || event === 'step_end')
+          handlers.onStep?.(event, payload);
         else if (event === 'delta') handlers.onDelta?.(String(payload.text || ''));
         else if (event === 'done') handlers.onDone?.(payload);
         else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));

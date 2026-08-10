@@ -9,6 +9,7 @@ import {
   createWorkflow,
   deleteWorkflow,
   listWorkflows,
+  updateWorkflow,
   type WorkflowItem,
 } from '@/lib/workflows-api'
 import AppAlertDialog from '@/components/ui/AppAlertDialog.vue'
@@ -23,6 +24,7 @@ const creating = ref(false)
 const error = ref('')
 const pendingDelete = ref<WorkflowItem | null>(null)
 const deleting = ref(false)
+const togglingId = ref<string | null>(null)
 
 async function reload() {
   loading.value = true
@@ -66,14 +68,33 @@ async function onCreate() {
 async function confirmDelete() {
   if (!pendingDelete.value) return
   deleting.value = true
+  error.value = ''
   try {
     await deleteWorkflow(pendingDelete.value.id)
     pendingDelete.value = null
     await reload()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '删除失败'
+    // 保留弹窗，方便在 API 恢复后再次确认
   } finally {
     deleting.value = false
+  }
+}
+
+async function onToggleEnabled(w: WorkflowItem, next: boolean) {
+  if (!w.publishedVersion) {
+    error.value = '请先发布后再启停；未发布不可对外引用'
+    return
+  }
+  togglingId.value = w.id
+  error.value = ''
+  try {
+    const updated = await updateWorkflow(w.id, { enabled: next })
+    items.value = items.value.map((x) => (x.id === w.id ? updated : x))
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '更新状态失败'
+  } finally {
+    togglingId.value = null
   }
 }
 
@@ -91,7 +112,7 @@ onMounted(() => {
   <template v-else>
     <PageHeader
       title="工作流"
-      description="编排知识检索、LLM、场景智能体与 MCP 工具。保存草稿后可试跑；发布后可供其它页面引用运行。"
+      description="编排知识检索、LLM、场景智能体与 MCP 工具。草稿可试跑；发布后才可启停并供其它页面引用。"
     >
       <template #actions>
         <button
@@ -123,7 +144,7 @@ onMounted(() => {
             <th class="text-left font-medium px-4 py-2.5">域</th>
             <th class="text-left font-medium px-4 py-2.5">草稿</th>
             <th class="text-left font-medium px-4 py-2.5">已发布</th>
-            <th class="text-left font-medium px-4 py-2.5">状态</th>
+            <th class="text-left font-medium px-4 py-2.5">对外状态</th>
             <th class="text-left font-medium px-4 py-2.5">操作</th>
           </tr>
         </thead>
@@ -150,9 +171,41 @@ onMounted(() => {
             <td class="px-4 py-3 data-num text-muted-foreground">
               {{ w.publishedVersion ? `v${w.publishedVersion.version}` : '未发布' }}
             </td>
-            <td class="px-4 py-3">
-              <span :class="w.enabled ? 'text-patina' : 'text-muted-foreground'">
-                {{ w.enabled ? '启用' : '停用' }}
+            <td class="px-4 py-3" @click.stop>
+              <template v-if="w.publishedVersion">
+                <label
+                  class="inline-flex items-center gap-2 select-none"
+                  :class="togglingId === w.id ? 'opacity-60' : ''"
+                  :title="w.enabled ? '已启用：可供其它页面引用' : '已停用：其它页面不可引用'"
+                >
+                  <input
+                    type="checkbox"
+                    class="size-3.5 accent-patina"
+                    :checked="w.enabled"
+                    :disabled="togglingId === w.id"
+                    @change="
+                      onToggleEnabled(
+                        w,
+                        ($event.target as HTMLInputElement).checked,
+                      )
+                    "
+                  />
+                  <span :class="w.enabled ? 'text-patina' : 'text-muted-foreground'">
+                    {{ w.enabled ? '启用' : '停用' }}
+                  </span>
+                  <Loader2
+                    v-if="togglingId === w.id"
+                    class="size-3 animate-spin text-muted-foreground"
+                  />
+                </label>
+              </template>
+              <span
+                v-else
+                class="text-muted-foreground"
+                title="发布后才可启停并对外引用；草稿仍可编辑与试跑"
+              >
+                —
+                <span class="ml-1 text-[10px]">发布后可启停</span>
               </span>
             </td>
             <td class="px-4 py-3" @click.stop>
