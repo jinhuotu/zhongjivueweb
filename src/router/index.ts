@@ -166,8 +166,8 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  const title = (to.meta.title as string | undefined) || '中机六院设备能碳'
-  document.title = `${title} · 中机六院设备能碳`
+  const title = (to.meta.title as string | undefined) || '优祺智能'
+  document.title = `${title} · 优祺智能`
 
   useMobileMenuStore().close()
 

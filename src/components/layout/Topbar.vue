@@ -15,6 +15,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobile-menu'
 import { useThemeStore } from '@/stores/theme'
+import logoImg from '@/assets/scada/logo.png'
 
 const auth = useAuthStore()
 const mobileMenu = useMobileMenuStore()
@@ -112,11 +113,11 @@ async function onLogout() {
         <span class="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-iron pulse-alert" />
       </button>
       <div class="ml-2 flex items-center gap-2 border-l border-border pl-2">
-        <div
-          class="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-molybdenum to-coolant text-[11px] font-semibold text-white"
-        >
-          六院
-        </div>
+        <img
+          :src="logoImg"
+          alt="中机六院"
+          class="size-7 rounded-full object-cover"
+        />
         <div class="hidden leading-tight md:block">
           <div class="text-xs font-medium">{{ displayName }}</div>
           <div class="text-[10px] text-muted-foreground">

@@ -81,7 +81,7 @@ async function onSubmit() {
             >
               <Flame class="size-6" />
             </div>
-            <h1 class="text-3xl font-semibold tracking-wide">中机六院设备能碳</h1>
+            <h1 class="text-3xl font-semibold tracking-wide">优祺智能</h1>
             <p class="mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">
               工业燃气车式窑数字化能碳管控平台 · 登录后进入能碳总览与运维工作台。
             </p>
@@ -99,7 +99,7 @@ async function onSubmit() {
             >
               <Flame class="size-5" />
             </div>
-            <h1 class="text-xl font-semibold">中机六院设备能碳</h1>
+            <h1 class="text-xl font-semibold">优祺智能</h1>
           </div>
 
           <h2 class="text-lg font-medium">账号登录</h2>

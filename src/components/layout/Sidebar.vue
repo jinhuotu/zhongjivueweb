@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ChevronRight, Flame, Leaf, X } from 'lucide-vue-next'
+import { ChevronRight, Leaf, X } from 'lucide-vue-next'
 import { NAV_GROUPS, filterNavGroups, type NavGroup, type NavItem } from '@/config/nav'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobile-menu'
 import { useTabsStore } from '@/stores/tabs'
+import logoImg from '@/assets/scada/logo.png'
 
 const STORAGE_KEY = 'ecm:sidebar:expanded'
 
@@ -129,13 +130,13 @@ function toggleMobile(title: string) {
     class="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex"
   >
     <div class="flex h-14 items-center gap-2 border-b border-sidebar-border px-5">
-      <div
-        class="relative flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-iron via-iron/80 to-coolant shadow-[0_0_18px_var(--accent-glow)]"
-      >
-        <Flame class="size-4 text-background" :stroke-width="2.5" />
-      </div>
+      <img
+        :src="logoImg"
+        alt="中机六院"
+        class="size-8 rounded-md object-contain"
+      />
       <div class="leading-tight">
-        <div class="text-[14px] font-semibold tracking-wide">中机六院设备能碳</div>
+        <div class="text-[14px] font-semibold tracking-wide">优祺智能</div>
         <div class="font-mono text-[10px] tracking-[0.18em] text-muted-foreground">
           ECM · O&amp;M · v3.2
         </div>
@@ -312,13 +313,13 @@ function toggleMobile(title: string) {
     "
   >
     <div class="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
-      <div
-        class="relative flex size-8 items-center justify-center rounded-md bg-gradient-to-br from-iron via-iron/80 to-coolant shadow-[0_0_18px_var(--accent-glow)]"
-      >
-        <Flame class="size-4 text-background" :stroke-width="2.5" />
-      </div>
+      <img
+        :src="logoImg"
+        alt="中机六院"
+        class="size-8 rounded-md object-contain"
+      />
       <div class="flex-1 leading-tight">
-        <div class="text-[14px] font-semibold tracking-wide">中机六院设备能碳</div>
+        <div class="text-[14px] font-semibold tracking-wide">优祺智能</div>
         <div class="font-mono text-[10px] tracking-[0.18em] text-muted-foreground">
           ECM · O&amp;M · v3.2
         </div>
