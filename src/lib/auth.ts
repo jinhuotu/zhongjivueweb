@@ -10,6 +10,8 @@ export type AuthUser = {
   email: string | null
   is_superuser: boolean
   roles: string[]
+  /** 后端下发的可访问菜单 href；缺省时前端仅按 adminOnly 过滤 */
+  menus?: string[]
 }
 
 export type LoginResult = {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Sidebar from '@/components/layout/Sidebar.vue'
 import Topbar from '@/components/layout/Topbar.vue'
@@ -11,9 +11,19 @@ const IMMERSIVE_PATHS = ['/ai-chat']
 
 const route = useRoute()
 const auth = useAuthStore()
+const mainRef = ref<HTMLElement | null>(null)
 
 const immersive = computed(() =>
   IMMERSIVE_PATHS.some((p) => route.path === p || route.path.startsWith(`${p}/`)),
+)
+
+/** 主内容区自带 overflow 滚动，路由切换时需手动回顶 */
+watch(
+  () => route.fullPath,
+  async () => {
+    await nextTick()
+    mainRef.value?.scrollTo({ top: 0, left: 0 })
+  },
 )
 </script>
 
@@ -34,6 +44,7 @@ const immersive = computed(() =>
       <Topbar />
       <TabBar />
       <main
+        ref="mainRef"
         :class="
           cn(
             'min-h-0 flex-1',

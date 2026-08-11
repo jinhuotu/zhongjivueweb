@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import type { Component } from 'vue'
-import { flattenNavItems } from '@/config/nav'
+import { canAccessPath, flattenNavItems } from '@/config/nav'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobile-menu'
 import { useTabsStore } from '@/stores/tabs'
@@ -16,6 +16,7 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/ai-chat': () => import('@/views/AiChatView.vue'),
   '/ai-reports': () => import('@/views/AiReportsView.vue'),
   '/scene-agents': () => import('@/views/SceneAgentsView.vue'),
+  '/workflows': () => import('@/views/WorkflowsView.vue'),
   '/model-manage': () => import('@/views/ModelManageView.vue'),
   '/prompt-manage': () => import('@/views/PromptManageView.vue'),
   '/mcp-manage': () => import('@/views/McpManageView.vue'),
@@ -104,7 +105,7 @@ function buildFeatureRoutes(): RouteRecordRaw[] {
       path,
       name: item.href === '/' ? 'overview' : item.href.slice(1).replace(/\//g, '-'),
       component,
-      meta: { title: item.label },
+      meta: { title: item.label, adminOnly: Boolean(item.adminOnly) },
       ...(item.href.startsWith('/production/')
         ? { props: { system: item.href.split('/').pop() } }
         : {}),
@@ -117,6 +118,12 @@ function buildFeatureRoutes(): RouteRecordRaw[] {
       name: 'knowledge-detail',
       component: () => import('@/views/KnowledgeDetailView.vue'),
       meta: { title: '知识库详情' },
+    },
+    {
+      path: 'workflows/:id',
+      name: 'workflow-editor',
+      component: () => import('@/views/WorkflowEditorView.vue'),
+      meta: { title: '工作流编辑', adminOnly: true },
     },
     {
       path: 'production/:system',
@@ -161,6 +168,15 @@ router.beforeEach(async (to) => {
   }
   if (auth.user && isPublic) {
     return { path: '/' }
+  }
+  if (auth.user && !isPublic) {
+    if (to.meta.adminOnly && !auth.isAdmin) {
+      return { path: '/' }
+    }
+    const ok = canAccessPath(to.path, auth.isAdmin, auth.menus)
+    if (!ok) {
+      return { path: '/' }
+    }
   }
   return true
 })

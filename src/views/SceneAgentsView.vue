@@ -524,7 +524,7 @@ function summarize(item: AgentItem) {
             v-if="toolOptions.length === 0"
             class="text-[11px] text-text-muted border border-dashed border-hairline rounded-md px-3 py-2"
           >
-            暂无 MCP 工具，可到「MCP 管理」配置；不选白名单时对话将使用全局已启用工具。
+            暂无 MCP 工具，可到「工具管理」配置（示例：poetry run python scripts/seed_mcp_utility.py）；不选白名单时对话将使用全局已启用工具。
           </div>
           <div
             v-else

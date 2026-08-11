@@ -28,7 +28,7 @@ export const PRODUCTION_SYSTEMS: Record<
   },
   shuttle: {
     code: 'shuttle',
-    title: '梭式窑管理',
+    title: '梭式窑烟气',
     scadaTitle: '梭式窑烟气治理系统',
     description: '通达梭式窑烟气治理画面还原：换热/脱硫脱硝/CEMS、操作/报警/历史',
     seriesTags: ['SO2', 'NOX', 'DUST', 'NH3', 'O2', 'FG_FLOW', 'DES_TOWER_P', 'IDF_HZ'],

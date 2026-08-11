@@ -360,7 +360,7 @@ const envPlaceholder = computed(() =>
     class="py-20 text-center text-[12px] text-text-secondary"
   >
     <Loader2 class="inline size-4 animate-spin mr-2" />
-    {{ auth.loading ? '加载中…' : '无权限访问 MCP 管理' }}
+    {{ auth.loading ? '加载中…' : '无权限访问工具管理' }}
   </div>
 
   <div v-else class="space-y-5">
@@ -368,11 +368,13 @@ const envPlaceholder = computed(() =>
       <div>
         <h1 class="text-xl font-semibold flex items-center gap-2">
           <Plug class="size-5 text-iron" />
-          MCP 管理
+          工具管理
+          <span class="text-[11px] font-normal text-text-muted">（MCP）</span>
         </h1>
         <p class="mt-1 text-[12px] text-text-secondary max-w-3xl">
-          登记 Model Context Protocol 服务器。保存会写入配置；保存后会自动做连通性探测并缓存工具
-          （stdio 首次可能通过 npx 下载包，需等待 1～3 分钟）。也可手动点「连通性探测 / 刷新工具」。
+          登记可供对话 / 场景智能体 / 工作流调用的工具服务（MCP）。内置示例可用
+          <code class="px-1 rounded bg-bg-base border border-hairline">poetry run python scripts/seed_mcp_utility.py</code>
+          注册「时间 / 天气」。保存后会自动探测并缓存工具；stdio 首次拉包可能需等待。
         </p>
       </div>
       <button

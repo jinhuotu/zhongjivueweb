@@ -23,8 +23,10 @@ import {
   deleteAiReport,
   getAiReport,
   listAiReports,
+  listPublishedWorkflows,
   streamGenerateReport,
   type AiReportItem,
+  type PublishedWorkflowOption,
   type ReportMode,
   type ReportType,
 } from '@/lib/ai-reports-api'
@@ -92,6 +94,10 @@ const activeType = ref<ReportType>('efficiency')
 const furnaces = ref<FurnaceItem[]>([])
 const furnaceId = ref('')
 const mode = ref<ReportMode>('deep')
+const workflowId = ref('')
+const workflows = ref<PublishedWorkflowOption[]>([])
+const workflowsLoading = ref(false)
+const stepLog = ref<string[]>([])
 const generating = ref(false)
 const content = ref('')
 const meta = ref<{
@@ -99,6 +105,7 @@ const meta = ref<{
   refs?: number
   hasSamples?: boolean
   reportId?: string
+  workflowId?: string | null
 } | null>(null)
 const history = ref<AiReportItem[]>([])
 const historyLoading = ref(true)
@@ -117,7 +124,13 @@ const panelSubtitle = computed(() => {
   if (!meta.value?.furnaceName) return '选择窑炉与模式后点击「生成报告」'
   const samples =
     meta.value.hasSamples === false ? ' · ⚠️ 无工况样本' : ''
-  return `${meta.value.furnaceName} · 知识库 ${meta.value.refs ?? 0} 条${samples}`
+  const wf = meta.value.workflowId ? ' · 工作流编排' : ''
+  return `${meta.value.furnaceName} · 知识库 ${meta.value.refs ?? 0} 条${samples}${wf}`
+})
+
+const selectedWorkflowName = computed(() => {
+  if (!workflowId.value) return ''
+  return workflows.value.find((w) => w.id === workflowId.value)?.name || workflowId.value
 })
 
 async function loadHistory() {
@@ -159,6 +172,16 @@ onMounted(() => {
       furnacesLoading.value = false
     }
   })()
+  void (async () => {
+    workflowsLoading.value = true
+    try {
+      workflows.value = await listPublishedWorkflows()
+    } catch {
+      workflows.value = []
+    } finally {
+      workflowsLoading.value = false
+    }
+  })()
   void loadHistory()
 })
 
@@ -179,13 +202,19 @@ async function generate() {
   }
   content.value = ''
   meta.value = null
+  stepLog.value = []
   generating.value = true
   const ctrl = new AbortController()
   abortCtrl = ctrl
   let gotDone = false
   try {
     await streamGenerateReport(
-      { type: activeType.value, furnaceId: furnaceId.value, mode: mode.value },
+      {
+        type: activeType.value,
+        furnaceId: furnaceId.value,
+        mode: mode.value,
+        workflowId: workflowId.value || null,
+      },
       {
         onMeta: (m) => {
           meta.value = {
@@ -193,7 +222,14 @@ async function generate() {
             refs: m.refs,
             hasSamples: m.hasSamples,
             reportId: m.reportId,
+            workflowId: m.workflowId,
           }
+        },
+        onStep: (ev, p) => {
+          const nt = String(p.nodeType || '')
+          const nid = String(p.nodeId || '')
+          if (ev === 'step_start') stepLog.value.push(`▶ ${nt} (${nid})`)
+          else stepLog.value.push(`✓ ${nt} 完成`)
         },
         onDelta: (text) => {
           content.value += text
@@ -232,7 +268,10 @@ async function openHistory(item: AiReportItem) {
       furnaceName: full.furnaceName || undefined,
       refs: full.refsCount,
       reportId: full.id,
+      workflowId: full.workflowId || null,
     }
+    workflowId.value = full.workflowId || ''
+    stepLog.value = []
   } catch (e) {
     toast.value = e instanceof Error ? e.message : '打开报告失败'
   }
@@ -272,7 +311,7 @@ function exportReport() {
       <div>
         <h1 class="text-xl font-semibold text-text-primary">AI 智能报告中心</h1>
         <p class="text-sm text-text-muted mt-1">
-          主 API 生成：窑炉历史工况 + 知识库 RAG + 模型管理中的 LLM（已替换前端 Coze BFF）
+          默认：窑炉工况 + 知识库 RAG + LLM。可选绑定「已发布工作流」走编排引擎生成。
         </p>
       </div>
       <div class="text-xs text-text-muted">
@@ -417,10 +456,40 @@ function exportReport() {
               <p class="text-[11px] text-text-muted mt-1.5">
                 {{
                   mode === 'fast'
-                    ? '· 使用模型管理中的「快速」LLM'
-                    : '· 使用模型管理中的「深度」LLM'
+                    ? '· 内置流水线使用「快速」LLM'
+                    : '· 内置流水线使用「深度」LLM'
                 }}
               </p>
+            </div>
+            <div>
+              <label class="block text-xs text-text-muted mb-1.5">
+                绑定工作流（可选）
+              </label>
+              <select
+                v-model="workflowId"
+                :disabled="generating || workflowsLoading"
+                class="w-full bg-bg-base border border-hairline rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-molybdenum"
+              >
+                <option value="">不使用（内置 RAG + LLM）</option>
+                <option v-for="w in workflows" :key="w.id" :value="w.id">
+                  {{ w.name }}（v{{ w.publishedVersion ?? '—' }}）
+                </option>
+              </select>
+              <p class="text-[11px] text-text-muted mt-1.5 leading-relaxed">
+                {{
+                  workflows.length
+                    ? workflowId
+                      ? `将按已发布工作流「${selectedWorkflowName}」编排生成（需含 LLM/智能体等产出正文的节点）`
+                      : '仅列出已发布工作流；请在「AI 智控 → 工作流」中发布后再选'
+                    : '暂无已发布工作流，请先在工作流页发布一条'
+                }}
+              </p>
+            </div>
+            <div
+              v-if="stepLog.length"
+              class="rounded border border-hairline bg-bg-base/50 p-3 text-[11px] font-mono text-text-muted max-h-28 overflow-auto whitespace-pre-wrap"
+            >
+              {{ stepLog.join('\n') }}
             </div>
             <div
               class="rounded border border-hairline bg-bg-base/50 p-3 text-xs text-text-muted space-y-1.5"
@@ -430,8 +499,8 @@ function exportReport() {
                 本次报告将整合
               </div>
               <div>· 该窑最新快照 + 近 24h 抽稀统计</div>
-              <div>· 知识库匹配 Top-5 片段</div>
-              <div>· 缺数据处强制标注假设 / 缺失</div>
+              <div>· 知识库匹配 Top-5 片段（注入工作流上下文）</div>
+              <div>· {{ workflowId ? '正文由已发布工作流产出' : '正文由内置 LLM 流式生成' }}</div>
             </div>
           </div>
         </Panel>
@@ -482,6 +551,11 @@ function exportReport() {
                   <div class="flex items-center gap-1">
                     <Clock class="size-3" />
                     {{ fmtTime(r.createdAt) }}
+                    <span
+                      v-if="r.workflowId"
+                      class="ml-1 px-1 rounded bg-molybdenum/10 text-molybdenum border border-molybdenum/30"
+                      title="经工作流生成"
+                    >工作流</span>
                   </div>
                   <div class="flex items-center gap-1">
                     <span v-if="r.status === 'failed'" class="text-iron">失败</span>
