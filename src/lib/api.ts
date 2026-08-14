@@ -4,10 +4,16 @@ export type ApiEnvelope<T> = {
   data: T
 }
 
-const DEFAULT_BASE = 'http://127.0.0.1:8000'
-
+/**
+ * 开发默认走空字符串 → 请求同源 `/api/*`，由 Vite proxy 转到本机 8000。
+ * 这样用局域网 IP 打开前端时，其它设备不会误连自己的 127.0.0.1。
+ * 需要直连后端时再设 VITE_API_BASE_URL（如 http://192.168.2.114:8000）。
+ */
 export function getApiBaseUrl(): string {
-  return (import.meta.env.VITE_API_BASE_URL || DEFAULT_BASE).replace(/\/$/, '')
+  const fromEnv = import.meta.env.VITE_API_BASE_URL
+  if (fromEnv) return fromEnv.replace(/\/$/, '')
+  if (import.meta.env.DEV) return ''
+  return 'http://127.0.0.1:8000'
 }
 
 export class ApiError extends Error {
@@ -71,7 +77,17 @@ export async function apiRequest<T>(
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     })
-  } catch {
+  } catch (e) {
+    // AbortSignal.timeout / 用户取消：必须原样抛出，否则会被误报成「后端未启动」
+    const name = e instanceof Error ? e.name : ''
+    if (
+      signal?.aborted ||
+      name === 'AbortError' ||
+      name === 'TimeoutError' ||
+      (e instanceof DOMException && (e.name === 'AbortError' || e.name === 'TimeoutError'))
+    ) {
+      throw e
+    }
     throw new ApiError('无法连接后端服务，请确认 API 已启动', -1, 0)
   }
 

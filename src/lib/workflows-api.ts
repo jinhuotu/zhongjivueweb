@@ -7,7 +7,15 @@ function requireToken(): string {
   return token
 }
 
-export type WorkflowNodeType = 'start' | 'end' | 'knowledge' | 'llm' | 'agent' | 'mcp'
+export type WorkflowNodeType =
+  | 'start'
+  | 'end'
+  | 'knowledge'
+  | 'llm'
+  | 'agent'
+  | 'mcp'
+  | 'yield_analysis'
+
 
 export type WorkflowGraphNode = {
   id: string

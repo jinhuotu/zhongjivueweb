@@ -45,9 +45,10 @@ const NODE_META: Record<
   llm: { label: 'LLM', tone: 'bg-molybdenum/15 border-molybdenum/40' },
   agent: { label: '场景智能体', tone: 'bg-iron/15 border-iron/40' },
   mcp: { label: 'MCP 工具', tone: 'bg-sulfur/15 border-sulfur/40' },
+  yield_analysis: { label: '铸造良率分析', tone: 'bg-iron/15 border-iron/40' },
 }
 
-const PALETTE: WorkflowNodeType[] = ['knowledge', 'llm', 'agent', 'mcp']
+const PALETTE: WorkflowNodeType[] = ['knowledge', 'llm', 'agent', 'mcp', 'yield_analysis']
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -71,7 +72,9 @@ const nameEdit = ref('')
 const nameEditing = ref(false)
 const nameSaving = ref(false)
 const nameInputRef = ref<HTMLInputElement | null>(null)
-const trialInput = ref('窑炉当前工况是否正常？请结合知识库简要回答。')
+const trialInput = ref(
+  '{"inventoryGuid":"F77529AB-5A23-4628-BF0D-663F30A4EB34","query":"生成同型号最优良率实践文档"}',
+)
 const runLog = ref<string[]>([])
 const runOutput = ref('')
 
@@ -381,9 +384,18 @@ async function onTrial() {
   runOutput.value = ''
   try {
     await saveWorkflowGraph(workflowId.value, exportGraph())
+    let input: unknown = trialInput.value
+    const trimmed = trialInput.value.trim()
+    if (trimmed.startsWith('{')) {
+      try {
+        input = JSON.parse(trimmed)
+      } catch {
+        input = trialInput.value
+      }
+    }
     await runWorkflowTrial(
       workflowId.value,
-      { input: trialInput.value, useDraft: true },
+      { input, useDraft: true },
       {
         onStepStart: (p) => {
           runLog.value.push(`▶ ${p.nodeType || ''} (${p.nodeId || ''})`)
@@ -717,6 +729,36 @@ onUnmounted(() => {
                 "
                 @change="onArgsChange(($event.target as HTMLTextAreaElement).value)"
               />
+            </template>
+
+            <template v-else-if="(selected.data as any).nodeType === 'yield_analysis'">
+              <label class="block text-[11px] text-muted-foreground">
+                InventoryGUID（可空，试跑时用 query / input.inventoryGuid）
+              </label>
+              <input
+                class="w-full h-7 px-2 rounded-md border border-border bg-background font-mono text-[10px]"
+                :value="(selected.data as any).inventoryGuid || ''"
+                placeholder="也可在试跑输入 GUID"
+                @change="updateSelectedData('inventoryGuid', ($event.target as HTMLInputElement).value.trim())"
+              />
+              <label class="inline-flex items-center gap-2 text-[11px] mt-1">
+                <input
+                  type="checkbox"
+                  :checked="(selected.data as any).includeWeather !== false"
+                  @change="
+                    updateSelectedData(
+                      'includeWeather',
+                      ($event.target as HTMLInputElement).checked,
+                    )
+                  "
+                />
+                关联历史气温
+              </label>
+              <p class="text-[10px] text-muted-foreground leading-relaxed">
+                推荐图：开始 → 铸造良率分析 → LLM（提示词：铸造同型号良率最优文档）→ 结束。
+                试跑 JSON：
+                <code class="font-mono">{"inventoryGuid":"...","query":"..."}</code>
+              </p>
             </template>
 
             <template v-else>

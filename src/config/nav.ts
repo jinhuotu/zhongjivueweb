@@ -11,6 +11,7 @@ import {
   Cpu,
   Bell,
   Users,
+  History,
   Settings,
   Activity,
   LibraryBig,
@@ -161,6 +162,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/ai-chat', label: 'AI 智能问答', icon: BotMessageSquare },
       { href: '/ai-reports', label: 'AI 智能报告', icon: FileSearch },
+      { href: '/casting-yield', label: '铸造良率分析', icon: FlaskConical },
       { href: '/scene-agents', label: '场景智能体', icon: Sparkles, adminOnly: true },
       { href: '/workflows', label: '工作流', icon: Workflow, adminOnly: true },
       { href: '/model-manage', label: '模型管理', icon: Boxes, adminOnly: true },
@@ -378,6 +380,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/reports', label: '统计报表', icon: FileChartColumn },
       { href: '/alerts', label: '告警中心', icon: Bell },
       { href: '/users', label: '用户与权限', icon: Users, adminOnly: true },
+      { href: '/logs', label: '操作与登录日志', icon: History, adminOnly: true },
       { href: '/settings', label: '系统设置', icon: Settings },
     ],
   },

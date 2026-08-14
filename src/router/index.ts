@@ -15,6 +15,7 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/realtime': () => import('@/views/RealtimeView.vue'),
   '/ai-chat': () => import('@/views/AiChatView.vue'),
   '/ai-reports': () => import('@/views/AiReportsView.vue'),
+  '/casting-yield': () => import('@/views/CastingYieldView.vue'),
   '/scene-agents': () => import('@/views/SceneAgentsView.vue'),
   '/workflows': () => import('@/views/WorkflowsView.vue'),
   '/model-manage': () => import('@/views/ModelManageView.vue'),
@@ -88,6 +89,7 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/reports': () => import('@/views/ReportsView.vue'),
   '/alerts': () => import('@/views/AlertsView.vue'),
   '/users': () => import('@/views/UsersView.vue'),
+  '/logs': () => import('@/views/AuditLogsView.vue'),
   '/settings': () => import('@/views/SettingsView.vue'),
 }
 
