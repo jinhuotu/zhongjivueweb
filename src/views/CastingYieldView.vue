@@ -726,7 +726,7 @@ function downloadMarkdown() {
 }
 
 function stepState(id: string) {
-  const ids = visibleSteps.value.map((s) => s.id)
+  const ids: string[] = visibleSteps.value.map((s) => s.id)
   const cur = ids.indexOf(progressStep.value)
   const idx = ids.indexOf(id)
   if (cur < 0) return 'idle'

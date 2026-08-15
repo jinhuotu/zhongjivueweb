@@ -10,6 +10,7 @@ import {
 let registered = false
 
 export function ensureEcharts() {
+  if (registered) return
   use([
     CanvasRenderer,
     LineChart,

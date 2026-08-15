@@ -1,7 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { VueFlow, type Connection, type Edge, type Node } from '@vue-flow/core'
+import { VueFlow, type Connection } from '@vue-flow/core'
+
+/** 避免直接用 Vue Flow 的 Node/Edge 泛型：vue-tsc 会报 TS2589（实例化过深）。 */
+type CanvasNode = {
+  id: string
+  type?: string
+  position: { x: number; y: number }
+  label?: string
+  data?: Record<string, unknown>
+  class?: string
+}
+
+type CanvasEdge = {
+  id: string
+  source: string
+  target: string
+  sourceHandle?: string
+  targetHandle?: string
+}
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import '@vue-flow/core/dist/style.css'
@@ -58,8 +76,8 @@ const workflowId = computed(() => String(route.params.id || ''))
 const showGate = computed(() => auth.loading || (!auth.isAdmin && !auth.loading))
 
 const item = ref<WorkflowItem | null>(null)
-const nodes = ref<Node[]>([])
-const edges = ref<Edge[]>([])
+const nodes = ref<CanvasNode[]>([])
+const edges = ref<CanvasEdge[]>([])
 const selectedId = ref<string | null>(null)
 const selectedEdgeId = ref<string | null>(null)
 const loading = ref(true)
@@ -83,7 +101,11 @@ const kbs = ref<KnowledgeBaseItem[]>([])
 const agents = ref<AgentItem[]>([])
 const mcpServers = ref<McpServerItem[]>([])
 
-const selected = computed(() => nodes.value.find((n) => n.id === selectedId.value) || null)
+const selected = computed(() => {
+  const id = selectedId.value
+  if (!id) return null
+  return nodes.value.find((n) => n.id === id) ?? null
+})
 
 const selectedNodeType = computed(() => {
   const t = (selected.value?.data as { nodeType?: string } | undefined)?.nodeType
@@ -122,7 +144,7 @@ function onConnect(c: Connection) {
   ]
 }
 
-function toFlowNodes(graph: WorkflowGraph): Node[] {
+function toFlowNodes(graph: WorkflowGraph): CanvasNode[] {
   return (graph.nodes || []).map((n) => ({
     id: n.id,
     type: 'default',
@@ -136,7 +158,7 @@ function toFlowNodes(graph: WorkflowGraph): Node[] {
   }))
 }
 
-function toFlowEdges(graph: WorkflowGraph): Edge[] {
+function toFlowEdges(graph: WorkflowGraph): CanvasEdge[] {
   return (graph.edges || []).map((e) => ({
     id: e.id,
     source: e.source,
@@ -197,12 +219,12 @@ async function loadAll() {
   }
 }
 
-function onNodeClick(ev: { node: Node }) {
+function onNodeClick(ev: { node: { id: string } }) {
   selectedId.value = ev.node.id
   selectedEdgeId.value = null
 }
 
-function onEdgeClick(ev: { edge: Edge }) {
+function onEdgeClick(ev: { edge: { id: string } }) {
   selectedEdgeId.value = ev.edge.id
   selectedId.value = null
 }

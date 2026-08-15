@@ -151,7 +151,7 @@ export type RunHandlers = {
 
 export async function runWorkflowTrial(
   id: string,
-  input: { input: string; useDraft?: boolean },
+  input: { input: unknown; useDraft?: boolean },
   handlers: RunHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
