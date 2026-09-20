@@ -5,6 +5,7 @@ import {
   GridComponent,
   TooltipComponent,
   LegendComponent,
+  MarkLineComponent,
 } from 'echarts/components'
 
 let registered = false
@@ -21,6 +22,7 @@ export function ensureEcharts() {
     GridComponent,
     TooltipComponent,
     LegendComponent,
+    MarkLineComponent,
   ])
   registered = true
 }

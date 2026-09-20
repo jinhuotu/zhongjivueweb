@@ -28,7 +28,7 @@ async function onSubmit() {
           ? '用户名或密码错误'
           : err.message
     } else if (err instanceof TypeError) {
-      error.value = '无法连接后端，请确认 zhongji-api 已启动（默认 :8000）'
+      error.value = '无法连接后端，请确认 zhongji-api 已启动（默认 :8800）'
     } else {
       error.value = '登录失败，请稍后重试'
     }

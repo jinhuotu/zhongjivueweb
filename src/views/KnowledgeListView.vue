@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   ScrollText,
+  Shield,
   Trash2,
   TriangleAlert,
 } from 'lucide-vue-next'
@@ -22,7 +23,7 @@ import {
   type KnowledgeBaseItem,
 } from '@/lib/knowledge-api'
 import { libraryCardAccentByName } from '@/lib/library-card-theme'
-import { ApiError } from '@/lib/api'
+import KbAclDialog from '@/components/knowledge/KbAclDialog.vue'
 
 const KB_ICONS = [BookOpen, Library, Brain, ScrollText, Layers]
 
@@ -47,6 +48,8 @@ function accentOf(base: KnowledgeBaseItem, index: number) {
 
 const router = useRouter()
 const items = ref<KnowledgeBaseItem[]>([])
+const canCreate = ref(false)
+const aclTarget = ref<KnowledgeBaseItem | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const modalMode = ref<'create' | 'edit' | null>(null)
@@ -71,7 +74,9 @@ function redirectLoginIfNeeded(err: unknown) {
 async function load() {
   loading.value = true
   try {
-    items.value = await listKnowledgeBases()
+    const data = await listKnowledgeBases()
+    items.value = data.items
+    canCreate.value = data.canCreate
   } catch (e) {
     if (redirectLoginIfNeeded(e)) return
     toast.value = {
@@ -100,6 +105,7 @@ onUnmounted(() => {
 })
 
 function openCreate() {
+  if (!canCreate.value) return
   editing.value = null
   name.value = ''
   description.value = ''
@@ -110,6 +116,7 @@ function openCreate() {
 function openEdit(base: KnowledgeBaseItem, e: Event) {
   e.preventDefault()
   e.stopPropagation()
+  if (!base.canManage) return
   editing.value = base
   name.value = base.name
   description.value = base.description || ''
@@ -181,6 +188,13 @@ async function submitModal() {
   }
 }
 
+function openAcl(base: KnowledgeBaseItem, e: Event) {
+  e.preventDefault()
+  e.stopPropagation()
+  if (!base.canManage) return
+  aclTarget.value = base
+}
+
 function askDelete(base: KnowledgeBaseItem, e: Event) {
   e.preventDefault()
   e.stopPropagation()
@@ -189,6 +203,7 @@ function askDelete(base: KnowledgeBaseItem, e: Event) {
 
 async function confirmDelete() {
   if (!pendingDelete.value) return
+  if (!pendingDelete.value?.canManage) return
   const base = pendingDelete.value
   deletingId.value = base.id
   try {
@@ -289,6 +304,16 @@ async function confirmDelete() {
             class="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
           >
             <button
+              v-if="base.canManage"
+              type="button"
+              title="权限"
+              class="size-8 rounded-md text-text-muted hover:text-molybdenum hover:bg-molybdenum/10 inline-flex items-center justify-center"
+              @click="openAcl(base, $event)"
+            >
+              <Shield class="size-3.5" />
+            </button>
+            <button
+              v-if="base.canManage"
               type="button"
               title="编辑知识库"
               class="size-8 rounded-md text-text-muted hover:text-molybdenum hover:bg-molybdenum/10 inline-flex items-center justify-center"
@@ -297,6 +322,7 @@ async function confirmDelete() {
               <Pencil class="size-3.5" />
             </button>
             <button
+              v-if="base.canManage"
               type="button"
               title="删除知识库"
               :disabled="deletingId === base.id"
@@ -336,10 +362,16 @@ async function confirmDelete() {
             <Layers class="size-3" />
             {{ base.chunkCount }} 切块
           </span>
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded-md border border-hairline text-[10px] font-mono text-text-muted"
+          >
+            {{ base.canManage ? '维护' : base.canUse ? '使用' : '查看' }}
+          </span>
         </div>
       </RouterLink>
 
       <button
+        v-if="canCreate"
         type="button"
         class="relative overflow-hidden border-2 border-dashed border-hairline rounded-xl min-h-[160px] p-4 flex flex-col items-center justify-center gap-2 text-text-secondary hover:border-molybdenum/45 hover:text-molybdenum hover:bg-molybdenum/[0.04] transition-all duration-200 hover:-translate-y-0.5"
         @click="openCreate"
@@ -355,7 +387,11 @@ async function confirmDelete() {
     </div>
 
     <div v-if="!loading && items.length === 0" class="text-[12px] text-text-muted">
-      还没有知识库。点击「增加知识库」开始创建，例如：缺陷库、运维库、能耗库等。
+      {{
+        canCreate
+          ? '还没有知识库。点击「增加知识库」开始创建，例如：缺陷库、运维库、能耗库等。'
+          : '暂无可见知识库。请联系管理员为你授权查看或使用。'
+      }}
     </div>
 
     <!-- Create / Edit modal -->
@@ -517,6 +553,14 @@ async function confirmDelete() {
         </div>
       </div>
     </div>
+
+    <KbAclDialog
+      :open="Boolean(aclTarget)"
+      :base-id="aclTarget?.id || ''"
+      :base-name="aclTarget?.name"
+      @close="aclTarget = null"
+      @saved="load"
+    />
 
     <div
       v-if="toast"

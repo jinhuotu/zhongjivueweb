@@ -63,7 +63,7 @@ const NODE_META: Record<
   llm: { label: 'LLM', tone: 'bg-molybdenum/15 border-molybdenum/40' },
   agent: { label: '场景智能体', tone: 'bg-iron/15 border-iron/40' },
   mcp: { label: 'MCP 工具', tone: 'bg-sulfur/15 border-sulfur/40' },
-  yield_analysis: { label: '铸造良率分析', tone: 'bg-iron/15 border-iron/40' },
+  yield_analysis: { label: '最优工艺推荐', tone: 'bg-iron/15 border-iron/40' },
 }
 
 const PALETTE: WorkflowNodeType[] = ['knowledge', 'llm', 'agent', 'mcp', 'yield_analysis']
@@ -197,14 +197,14 @@ async function loadAll() {
     const [wf, p, kb, ag, mcp] = await Promise.all([
       getWorkflow(workflowId.value),
       listPrompts().catch(() => [] as PromptItem[]),
-      listKnowledgeBases().catch(() => [] as KnowledgeBaseItem[]),
+      listKnowledgeBases('use').catch(() => ({ items: [] as KnowledgeBaseItem[], canCreate: false })),
       listAgents().catch(() => [] as AgentItem[]),
       listMcpServers().catch(() => [] as McpServerItem[]),
     ])
     item.value = wf
     nameEdit.value = wf.name
     prompts.value = p
-    kbs.value = kb
+    kbs.value = kb.items
     agents.value = ag.filter((a) => a.enabled)
     mcpServers.value = mcp
     const graph = wf.draftVersion?.graph || { nodes: [], edges: [] }
@@ -777,7 +777,7 @@ onUnmounted(() => {
                 关联历史气温
               </label>
               <p class="text-[10px] text-muted-foreground leading-relaxed">
-                推荐图：开始 → 铸造良率分析 → LLM（提示词：铸造同型号良率最优文档）→ 结束。
+                推荐图：开始 → 最优工艺推荐 → LLM（提示词：铸造同型号良率最优文档）→ 结束。
                 试跑 JSON：
                 <code class="font-mono">{"inventoryGuid":"...","query":"..."}</code>
               </p>

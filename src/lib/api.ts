@@ -5,15 +5,15 @@ export type ApiEnvelope<T> = {
 }
 
 /**
- * 开发默认走空字符串 → 请求同源 `/api/*`，由 Vite proxy 转到本机 8000。
+ * 开发默认走空字符串 → 请求同源 `/api/*`，由 Vite proxy 转到本机 8800。
  * 这样用局域网 IP 打开前端时，其它设备不会误连自己的 127.0.0.1。
- * 需要直连后端时再设 VITE_API_BASE_URL（如 http://192.168.2.114:8000）。
+ * 需要直连后端时再设 VITE_API_BASE_URL（如 http://192.168.2.114:8800）。
  */
 export function getApiBaseUrl(): string {
   const fromEnv = import.meta.env.VITE_API_BASE_URL
   if (fromEnv) return fromEnv.replace(/\/$/, '')
   if (import.meta.env.DEV) return ''
-  return 'http://127.0.0.1:8000'
+  return 'http://127.0.0.1:8800'
 }
 
 export class ApiError extends Error {
@@ -43,6 +43,12 @@ function friendlyMessage(status: number, msg?: string): string {
   }
   if (status === 403) {
     return '没有权限执行此操作'
+  }
+  if (status === 404) {
+    return (
+      (msg && msg.trim()) ||
+      '接口不存在（404）。若刚加过后端路由，请先关掉占用 8800 的旧 API 进程再启动'
+    )
   }
   // 优先展示后端具体错误（如 MCP stdio 失败原因）
   if (msg && msg.trim()) {

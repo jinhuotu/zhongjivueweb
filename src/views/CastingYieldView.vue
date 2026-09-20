@@ -1,52 +1,55 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import type { EChartsOption } from 'echarts'
 import VChart from 'vue-echarts'
-import { FlaskConical, Loader2, FileText, Search, CloudSun, Copy, Download } from 'lucide-vue-next'
+import { FlaskConical, Loader2, FileText, CloudSun, Copy, Download, ImagePlus, X, ScanLine } from 'lucide-vue-next'
 import { Panel } from '@/components/ui-kit'
 import ChatMarkdown from '@/components/ai/ChatMarkdown.vue'
 import { ensureEcharts } from '@/components/ui-kit/charts/register'
 import { tooltipBase, useChartPalette } from '@/components/ui-kit/charts/theme'
 import { ApiError } from '@/lib/api'
 import {
-  searchCastingOrders,
-  loadCastingOrderItems,
+  matchCastingDrawing,
+  rematchCastingDrawing,
   streamCastingYieldAnalysis,
   streamCastingYieldDocument,
+  type DrawingExtracted,
+  type DrawingMatchCandidate,
   type InventoryCandidate,
   type ProcessRow,
-  type SaleOrderCandidate,
   type SaleOrderItem,
   type WeatherYieldBlock,
   type YieldAnalysisResult,
 } from '@/lib/casting-api'
 import { listPrompts, type PromptItem } from '@/lib/prompts-api'
+import { listModelOptions, type ModelOptionItem } from '@/lib/models-api'
 
 ensureEcharts()
 
 const palette = useChartPalette()
 
-const query = ref('')
-const selectedOrderGuid = ref('')
-const selectedOrderCode = ref('')
 const selectedGuid = ref('')
 const analyzing = ref(false)
 const generating = ref(false)
-const searching = ref(false)
-const loadingOrder = ref(false)
 const error = ref('')
 const toast = ref('')
 const result = ref<YieldAnalysisResult | null>(null)
 const candidates = ref<InventoryCandidate[]>([])
-const orderCandidates = ref<SaleOrderCandidate[]>([])
-const orderItems = ref<SaleOrderItem[]>([])
-const orderHeader = ref<SaleOrderCandidate | null>(null)
-const suggestions = ref<SaleOrderCandidate[]>([])
-const showSuggest = ref(false)
+const drawingCandidates = ref<DrawingMatchCandidate[]>([])
+const drawingExtracted = ref<DrawingExtracted | null>(null)
+const drawingFileName = ref('')
+const drawingPreviewUrl = ref('')
+const matchingDrawing = ref(false)
+const rematchingDrawing = ref(false)
+const drawingKeywordsEdit = ref('')
 const markdown = ref('')
 const prompts = ref<PromptItem[]>([])
 const analyzedItem = ref<SaleOrderItem | null>(null)
 const promptId = ref('')
+const visionModels = ref<ModelOptionItem[]>([])
+const visionModelId = ref('')
+const textModelHint = ref('')
 const copied = ref(false)
 
 const PROGRESS_STEPS = [
@@ -60,7 +63,9 @@ const PROGRESS_STEPS = [
 const progressStep = ref('')
 const progressLabel = ref('')
 
-const busy = computed(() => analyzing.value || generating.value || loadingOrder.value)
+const busy = computed(
+  () => analyzing.value || generating.value || matchingDrawing.value || rematchingDrawing.value,
+)
 const showProgress = computed(() => busy.value && !!progressStep.value)
 const visibleSteps = computed(() =>
   generating.value ? PROGRESS_STEPS : PROGRESS_STEPS.filter((s) => s.id !== 'document'),
@@ -404,22 +409,14 @@ function fmtNum(v?: number | string | null) {
 
 function buildOrderContext(item?: SaleOrderItem | null) {
   const it = item || analyzedItem.value
-  if (!it && !selectedOrderCode.value && !orderHeader.value) return undefined
+  if (!it) return undefined
   return {
-    saleOrderCode: selectedOrderCode.value || it?.saleOrderCode || orderHeader.value?.saleOrderCode || '',
-    saleOrderGuid: selectedOrderGuid.value || it?.saleOrderGuid || orderHeader.value?.saleOrderGuid || '',
-    saleOrderDate: orderHeader.value?.saleOrderDate || it?.saleOrderDate || '',
-    inventoryGuid: it?.inventoryGuid || selectedGuid.value,
-    code: it?.code,
-    name: it?.name,
-    spec: it?.spec,
-    materialName: it?.materialName,
-    position: it?.position,
-    billOrderQty: it?.billOrderQty,
-    scheduOrderQty: it?.scheduOrderQty,
-    workingQty: it?.workingQty,
-    stockQty: it?.stockQty,
-    mpsingQty: it?.mpsingQty,
+    inventoryGuid: it.inventoryGuid || selectedGuid.value,
+    code: it.code,
+    name: it.name,
+    spec: it.spec,
+    materialName: it.materialName,
+    position: it.position,
   }
 }
 
@@ -432,38 +429,6 @@ function analyzePayload(item?: SaleOrderItem | null) {
   return body
 }
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null
-let searchAbort: AbortController | null = null
-
-function scheduleSuggest() {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    void loadSuggestions()
-  }, 380)
-}
-
-async function loadSuggestions() {
-  const q = query.value.trim()
-  if (selectedOrderGuid.value || q.length < 1 || busy.value) {
-    suggestions.value = []
-    showSuggest.value = false
-    return
-  }
-  searchAbort?.abort()
-  searchAbort = new AbortController()
-  searching.value = true
-  try {
-    const data = await searchCastingOrders({ query: q, top: 12, signal: searchAbort.signal })
-    suggestions.value = data.items || []
-    showSuggest.value = suggestions.value.length > 0
-  } catch {
-    suggestions.value = []
-    showSuggest.value = false
-  } finally {
-    searching.value = false
-  }
-}
-
 async function loadOptions() {
   try {
     prompts.value = (await listPrompts()) || []
@@ -472,6 +437,25 @@ async function loadOptions() {
     if (castingPrompt) promptId.value = castingPrompt.id
   } catch {
     /* 选项失败不阻塞主流程 */
+  }
+  try {
+    visionModels.value = await listModelOptions({
+      kind: 'llm',
+      modelType: 'multimodal_vision',
+    })
+    if (!visionModelId.value && visionModels.value.length) {
+      visionModelId.value = visionModels.value[0].id
+    }
+    const textOpts = await listModelOptions({ kind: 'llm', modelType: 'text_chat' })
+    const bound =
+      textOpts.find((m) => m.scopeDeep) ||
+      textOpts.find((m) => m.scopeFast) ||
+      textOpts[0]
+    textModelHint.value = bound
+      ? `${bound.name}（${bound.scopeDeep ? '深度' : bound.scopeFast ? '快速' : '文本'}）`
+      : '未绑定文本模型'
+  } catch {
+    visionModels.value = []
   }
 }
 
@@ -526,107 +510,144 @@ function onProgress(p: { step?: string; label?: string }) {
   if (p.label) progressLabel.value = p.label
 }
 
-async function applyOrderItems(data: {
-  found: boolean
-  message: string
-  order: SaleOrderCandidate | null
-  items: SaleOrderItem[]
-}) {
-  orderCandidates.value = []
-  if (!data.found) {
-    orderItems.value = []
-    orderHeader.value = null
-    error.value = data.message || '没有该订单编号的订货清单'
-    return
-  }
-  orderHeader.value = data.order
-  orderItems.value = data.items || []
-  selectedOrderGuid.value = data.order?.saleOrderGuid || selectedOrderGuid.value
-  selectedOrderCode.value = data.order?.saleOrderCode || selectedOrderCode.value
-  query.value = selectedOrderCode.value || query.value
-  toast.value = data.message
-}
-
-async function fetchOrderItems(input: { saleOrderGuid?: string; saleOrderCode?: string }) {
-  error.value = ''
-  toast.value = ''
-  markdown.value = ''
-  result.value = null
-  selectedGuid.value = ''
-  analyzedItem.value = null
-  candidates.value = []
-  showSuggest.value = false
-  loadingOrder.value = true
-  try {
-    const data = await loadCastingOrderItems(input)
-    await applyOrderItems(data)
-  } catch (e) {
-    orderItems.value = []
-    orderHeader.value = null
-    error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : '查询订单失败'
-  } finally {
-    loadingOrder.value = false
-  }
-}
-
-async function onQueryOrder() {
-  const q = query.value.trim()
-  if (!q && !selectedOrderGuid.value) {
-    error.value = '请输入订单编号'
-    return
-  }
-  if (selectedOrderGuid.value) {
-    await fetchOrderItems({ saleOrderGuid: selectedOrderGuid.value })
-    return
-  }
-  loadingOrder.value = true
-  error.value = ''
-  toast.value = ''
-  showSuggest.value = false
-  try {
-    const data = await searchCastingOrders({ query: q, top: 20 })
-    const items = data.items || []
-    const exact = items.filter((it) => (it.saleOrderCode || '').toLowerCase() === q.toLowerCase())
-    const pick = exact.length === 1 ? exact[0] : items.length === 1 ? items[0] : null
-    if (pick) {
-      selectedOrderGuid.value = pick.saleOrderGuid
-      selectedOrderCode.value = pick.saleOrderCode || q
-      await fetchOrderItems({ saleOrderGuid: pick.saleOrderGuid })
-      return
-    }
-    if (!items.length) {
-      orderItems.value = []
-      orderHeader.value = null
-      orderCandidates.value = []
-      error.value = '没有该订单编号'
-      return
-    }
-    orderCandidates.value = items
-    orderItems.value = []
-    orderHeader.value = null
-    toast.value = '匹配到多个订单，请选择'
-  } catch (e) {
-    error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : '查询订单失败'
-  } finally {
-    loadingOrder.value = false
-  }
-}
-
-async function onSelectOrder(item: SaleOrderCandidate) {
-  selectedOrderGuid.value = item.saleOrderGuid
-  selectedOrderCode.value = item.saleOrderCode || ''
-  query.value = item.saleOrderCode || item.saleOrderGuid
-  suggestions.value = []
-  showSuggest.value = false
-  orderCandidates.value = []
-  await fetchOrderItems({ saleOrderGuid: item.saleOrderGuid })
-}
-
 async function onSelectCandidate(item: InventoryCandidate) {
   await onAnalyzeItem({
     inventoryGuid: item.inventoryGuid,
-    saleOrderGuid: selectedOrderGuid.value,
-    saleOrderCode: selectedOrderCode.value,
+    code: item.code,
+    name: item.name,
+    spec: item.spec,
+  })
+}
+
+function clearDrawingPreview() {
+  if (drawingPreviewUrl.value) {
+    URL.revokeObjectURL(drawingPreviewUrl.value)
+    drawingPreviewUrl.value = ''
+  }
+}
+
+function clearDrawingFile() {
+  clearDrawingPreview()
+  drawingFileName.value = ''
+  const input = document.getElementById('casting-drawing-input') as HTMLInputElement | null
+  if (input) input.value = ''
+}
+
+function pickDrawingFile() {
+  if (busy.value) return
+  document.getElementById('casting-drawing-input')?.click()
+}
+
+function onDrawingFileChange(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  clearDrawingPreview()
+  drawingFileName.value = file?.name || ''
+  error.value = ''
+  toast.value = ''
+  if (file) {
+    drawingPreviewUrl.value = URL.createObjectURL(file)
+  }
+}
+
+function onDrawingDrop(ev: DragEvent) {
+  ev.preventDefault()
+  if (busy.value) return
+  const file = ev.dataTransfer?.files?.[0]
+  if (!file || !file.type.startsWith('image/')) {
+    error.value = '请拖入 PNG / JPG 等图片文件'
+    return
+  }
+  clearDrawingPreview()
+  drawingFileName.value = file.name
+  drawingPreviewUrl.value = URL.createObjectURL(file)
+  error.value = ''
+  toast.value = ''
+  const input = document.getElementById('casting-drawing-input') as HTMLInputElement | null
+  if (input) {
+    const dt = new DataTransfer()
+    dt.items.add(file)
+    input.files = dt.files
+  }
+}
+
+function buildExtractedFromEdit(): DrawingExtracted | null {
+  const base = drawingExtracted.value
+  if (!base) return null
+  const keywords = drawingKeywordsEdit.value
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return { ...base, keywords }
+}
+
+async function onMatchDrawing() {
+  error.value = ''
+  toast.value = ''
+  const input = document.getElementById('casting-drawing-input') as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (!file) {
+    error.value = '请先选择要上传的图纸图片'
+    return
+  }
+  matchingDrawing.value = true
+  progressStep.value = 'match'
+  progressLabel.value = '正在识别图纸参数并匹配物料'
+  try {
+    const data = await matchCastingDrawing({
+      file,
+      top: 5,
+      visionModelId: visionModelId.value || null,
+    })
+    drawingExtracted.value = data.extracted
+    drawingKeywordsEdit.value = (data.extracted.keywords || []).join('，')
+    drawingCandidates.value = data.candidates || []
+    candidates.value = []
+    if (data.warnings?.length) {
+      toast.value = data.warnings.join('；')
+    } else if (data.message) {
+      toast.value = data.message
+    }
+    if (!drawingCandidates.value.length) {
+      error.value = '未匹配到相似物料，可修改关键词后点「按当前参数重匹配」'
+    }
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : '图纸识参失败'
+    drawingCandidates.value = []
+  } finally {
+    matchingDrawing.value = false
+    progressStep.value = ''
+    progressLabel.value = ''
+  }
+}
+
+async function onRematchDrawing() {
+  error.value = ''
+  toast.value = ''
+  const extracted = buildExtractedFromEdit()
+  if (!extracted) {
+    error.value = '请先上传图纸完成识参'
+    return
+  }
+  rematchingDrawing.value = true
+  try {
+    const data = await rematchCastingDrawing(extracted, 5)
+    drawingExtracted.value = data.extracted
+    drawingCandidates.value = data.candidates || []
+    toast.value = data.message || '已按当前参数重新匹配'
+    if (!drawingCandidates.value.length) {
+      error.value = '未匹配到相似物料，请调整尺寸或关键词'
+    }
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : '重新匹配失败'
+  } finally {
+    rematchingDrawing.value = false
+  }
+}
+
+async function onSelectDrawingCandidate(item: DrawingMatchCandidate) {
+  await onAnalyzeItem({
+    inventoryGuid: item.inventoryGuid,
     code: item.code,
     name: item.name,
     spec: item.spec,
@@ -638,7 +659,6 @@ async function onAnalyzeItem(item: SaleOrderItem) {
   toast.value = ''
   markdown.value = ''
   candidates.value = []
-  showSuggest.value = false
   if (!item.inventoryGuid) {
     error.value = '该行没有物料 GUID，无法分析'
     return
@@ -664,9 +684,8 @@ async function onAnalyzeItem(item: SaleOrderItem) {
 async function onGenerate() {
   error.value = ''
   toast.value = ''
-  showSuggest.value = false
   if (!result.value?.found || !result.value.inventoryGuid) {
-    error.value = '请先点订货清单中的「分析」，再导出文档'
+    error.value = '请先从图纸匹配结果中选择物料并完成分析，再导出文档'
     return
   }
   if (!result.value.rawContext?.trim()) {
@@ -735,211 +754,303 @@ function stepState(id: string) {
   return 'idle'
 }
 
-watch(query, () => {
-  scheduleSuggest()
-})
-
 onMounted(() => {
   void loadOptions()
 })
 
 onUnmounted(() => {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchAbort?.abort()
+  clearDrawingPreview()
 })
 </script>
 
 <template>
   <div class="h-full overflow-auto p-4 md:p-6 space-y-4">
+    <div class="flex items-start justify-between gap-3">
     <div class="flex items-start gap-3">
       <div class="h-10 w-10 rounded-lg bg-iron/15 border border-iron/30 flex items-center justify-center">
         <FlaskConical class="h-5 w-5 text-iron" />
       </div>
       <div>
-        <h1 class="text-lg font-semibold tracking-tight">铸造同型号良率分析</h1>
+        <h1 class="text-lg font-semibold tracking-tight">最优工艺推荐</h1>
         <p class="text-sm text-muted-foreground mt-0.5">
-          输入订单编号查看订货清单，再点某一物料分析同型号生产与良率；分析完成后可导出文档
+          上传图纸识参匹配物料，结合同型号历史生产数据推荐最优工艺，并可导出文档
         </p>
       </div>
     </div>
+    <RouterLink
+      to="/casting-peel"
+      class="shrink-0 h-9 px-3 rounded-md border border-border text-sm inline-flex items-center gap-1.5 hover:bg-muted/40"
+    >
+      <ScanLine class="h-4 w-4" />
+      脱棱角统计
+    </RouterLink>
+    </div>
 
-    <Panel class="p-4 space-y-3">
-      <label class="block text-xs text-muted-foreground">订单编号</label>
-      <div class="relative">
+    <Panel
+      title="图纸识参匹配"
+      subtitle="选择视觉模型并上传图纸；匹配物料后由文本模型完成分析与总结"
+    >
+      <div class="space-y-5">
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="block space-y-1.5">
+            <span class="text-[11px] font-medium text-muted-foreground tracking-wide">识参 · 多模态视觉</span>
+            <select
+              v-model="visionModelId"
+              class="w-full h-10 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-iron/40"
+              :disabled="busy || !visionModels.length"
+            >
+              <option v-if="!visionModels.length" value="">暂无启用的多模态视觉模型</option>
+              <option v-for="m in visionModels" :key="m.id" :value="m.id">
+                {{ m.name }}（{{ m.modelName }}）
+              </option>
+            </select>
+          </label>
+          <div class="space-y-1.5">
+            <span class="text-[11px] font-medium text-muted-foreground tracking-wide">后续 · 文本模型</span>
+            <div
+              class="h-10 px-3 rounded-md border border-border bg-muted/30 text-sm flex items-center text-muted-foreground"
+            >
+              {{ textModelHint || '加载中…' }}
+            </div>
+          </div>
+        </div>
+
         <input
-          v-model="query"
-          class="w-full h-9 px-3 rounded-md border border-border bg-background text-sm"
-          placeholder="例如 25120311"
-          autocomplete="off"
-          @input="selectedOrderGuid = ''; selectedOrderCode = ''"
-          @focus="showSuggest = suggestions.length > 0"
-          @keydown.enter.prevent="onQueryOrder"
-          @keydown.esc="showSuggest = false"
+          id="casting-drawing-input"
+          type="file"
+          accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+          class="sr-only"
+          :disabled="busy"
+          @change="onDrawingFileChange"
         />
+
         <div
-          v-if="showSuggest && suggestions.length"
-          class="absolute z-20 mt-1 w-full max-h-64 overflow-auto rounded-md border border-border bg-background shadow-lg"
+          class="rounded-lg border border-dashed transition-colors"
+          :class="
+            drawingPreviewUrl
+              ? 'border-iron/35 bg-iron/[0.03]'
+              : 'border-border hover:border-iron/40 hover:bg-muted/20'
+          "
+          @dragover.prevent
+          @drop="onDrawingDrop"
+        >
+          <div
+            v-if="!drawingPreviewUrl"
+            class="flex flex-col items-center justify-center gap-3 px-4 py-10 cursor-pointer"
+            role="button"
+            tabindex="0"
+            @click="pickDrawingFile"
+            @keydown.enter.prevent="pickDrawingFile"
+          >
+            <div class="h-12 w-12 rounded-full bg-iron/10 border border-iron/25 flex items-center justify-center">
+              <ImagePlus class="h-5 w-5 text-iron" />
+            </div>
+            <div class="text-center space-y-1">
+              <div class="text-sm text-foreground">点击或拖拽上传图纸</div>
+              <div class="text-[11px] text-muted-foreground">支持 PNG / JPG / WEBP，建议清晰线框图</div>
+            </div>
+          </div>
+
+          <div v-else class="p-4 flex flex-col sm:flex-row gap-4 sm:items-stretch">
+            <div
+              class="shrink-0 w-full sm:w-44 h-36 rounded-md border border-border bg-background overflow-hidden flex items-center justify-center"
+            >
+              <img
+                :src="drawingPreviewUrl"
+                alt="图纸预览"
+                class="max-h-full max-w-full object-contain"
+              />
+            </div>
+            <div class="flex-1 min-w-0 flex flex-col justify-between gap-3">
+              <div class="space-y-1">
+                <div class="text-[11px] text-muted-foreground">已选图纸</div>
+                <div class="text-sm font-medium truncate" :title="drawingFileName">{{ drawingFileName }}</div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="h-9 px-3 inline-flex items-center gap-1.5 rounded-md border border-border text-xs hover:bg-muted/40 disabled:opacity-50"
+                  :disabled="busy"
+                  @click="pickDrawingFile"
+                >
+                  更换图片
+                </button>
+                <button
+                  type="button"
+                  class="h-9 px-3 inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-muted-foreground hover:bg-muted/40 disabled:opacity-50"
+                  :disabled="busy"
+                  @click="clearDrawingFile"
+                >
+                  <X class="h-3.5 w-3.5" />
+                  清除
+                </button>
+                <button
+                  type="button"
+                  class="h-9 px-4 ml-auto inline-flex items-center gap-1.5 rounded-md bg-iron text-white text-sm font-medium hover:brightness-110 disabled:opacity-50"
+                  :disabled="busy || !drawingFileName || !visionModelId"
+                  @click="onMatchDrawing"
+                >
+                  <Loader2 v-if="matchingDrawing" class="h-4 w-4 animate-spin" />
+                  <ImagePlus v-else class="h-4 w-4" />
+                  识别并匹配
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="drawingFileName && !drawingPreviewUrl"
+          class="flex justify-end"
         >
           <button
-            v-for="item in suggestions"
-            :key="item.saleOrderGuid"
             type="button"
-            class="w-full text-left px-3 py-2 text-sm hover:bg-muted/50 border-b border-border/60 last:border-0"
-            :disabled="busy"
-            @mousedown.prevent="onSelectOrder(item)"
+            class="h-9 px-4 inline-flex items-center gap-1.5 rounded-md bg-iron text-white text-sm font-medium hover:brightness-110 disabled:opacity-50"
+            :disabled="busy || !visionModelId"
+            @click="onMatchDrawing"
           >
-            <div class="font-medium font-mono">{{ item.saleOrderCode || '—' }}</div>
-            <div class="text-[11px] text-muted-foreground">
-              {{ item.saleOrderDate || '无日期' }}
-            </div>
+            <Loader2 v-if="matchingDrawing" class="h-4 w-4 animate-spin" />
+            <ImagePlus v-else class="h-4 w-4" />
+            识别并匹配
           </button>
         </div>
-        <p v-if="searching" class="absolute right-2 top-2 text-[11px] text-muted-foreground">检索中…</p>
-      </div>
-      <p v-if="selectedOrderCode" class="text-[11px] text-muted-foreground font-mono">
-        已选定订单：{{ selectedOrderCode }}
-      </p>
 
-      <div class="flex flex-wrap gap-2 pt-1">
-        <button
-          type="button"
-          class="h-9 px-4 inline-flex items-center gap-1.5 rounded-md bg-background border border-border text-sm hover:bg-muted/40 disabled:opacity-50"
-          :disabled="busy"
-          @click="onQueryOrder"
-        >
-          <Loader2 v-if="loadingOrder" class="h-4 w-4 animate-spin" />
-          <Search v-else class="h-4 w-4" />
-          查询订单
-        </button>
-      </div>
+        <div v-if="showProgress" class="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+          <div class="text-xs font-medium">{{ progressLabel || '处理中…' }}</div>
+          <ol class="space-y-1.5">
+            <li
+              v-for="s in visibleSteps"
+              :key="s.id"
+              class="flex items-center gap-2 text-xs"
+              :class="
+                stepState(s.id) === 'active'
+                  ? 'text-foreground'
+                  : stepState(s.id) === 'done'
+                    ? 'text-patina'
+                    : 'text-muted-foreground'
+              "
+            >
+              <Loader2 v-if="stepState(s.id) === 'active'" class="h-3.5 w-3.5 animate-spin" />
+              <span
+                v-else
+                class="inline-block h-2 w-2 rounded-full"
+                :class="stepState(s.id) === 'done' ? 'bg-patina' : 'bg-border'"
+              />
+              {{ s.label }}
+            </li>
+          </ol>
+        </div>
 
-      <div v-if="showProgress" class="rounded-md border border-border bg-muted/20 p-3 space-y-2">
-        <div class="text-xs font-medium">{{ progressLabel || '处理中…' }}</div>
-        <ol class="space-y-1.5">
-          <li
-            v-for="s in visibleSteps"
-            :key="s.id"
-            class="flex items-center gap-2 text-xs"
-            :class="
-              stepState(s.id) === 'active'
-                ? 'text-foreground'
-                : stepState(s.id) === 'done'
-                  ? 'text-patina'
-                  : 'text-muted-foreground'
-            "
-          >
-            <Loader2 v-if="stepState(s.id) === 'active'" class="h-3.5 w-3.5 animate-spin" />
-            <span
-              v-else
-              class="inline-block h-2 w-2 rounded-full"
-              :class="stepState(s.id) === 'done' ? 'bg-patina' : 'bg-border'"
-            />
-            {{ s.label }}
-          </li>
-        </ol>
+        <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
+        <p v-else-if="toast" class="text-sm text-patina">{{ toast }}</p>
       </div>
-
-      <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-      <p v-else-if="toast" class="text-sm text-patina">{{ toast }}</p>
     </Panel>
 
     <Panel
-      v-if="!orderHeader && !orderItems.length && !orderCandidates.length && !result && !candidates.length && !busy"
-      class="p-6 text-sm text-muted-foreground space-y-2"
+      v-if="drawingExtracted"
+      title="识参结果"
+      :subtitle="
+        drawingExtracted.confidence != null
+          ? `置信度 ${Math.round(Number(drawingExtracted.confidence) * 100)}%`
+          : '可改关键词后重新匹配'
+      "
     >
-      <div class="text-foreground font-medium">输入订单编号后点「查询订单」</div>
-      <p>1. 输入订单编号，下方会边打边出候选，点选即可带出订货清单。</p>
-      <p>2. 清单列出本单全部物料（编码 / 名称 / 规格 / 材质 / 合同数量 / 计划数量）。</p>
-      <p>3. 点某一行「分析」，再查该型号历史库存、良率、工序和厂区气温。</p>
-      <p>4. 分析完成后再点「导出文档」，会按本页数据生成 Markdown 并写入本机导出目录。</p>
-    </Panel>
-
-    <Panel v-if="orderCandidates.length" class="p-4 space-y-3">
-      <div class="text-sm font-medium">匹配到多个订单，请选择</div>
-      <div class="overflow-auto rounded-md border border-border">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/30 text-left text-xs text-muted-foreground">
-            <tr>
-              <th class="px-3 py-2">订单编号</th>
-              <th class="px-3 py-2">日期</th>
-              <th class="px-3 py-2 w-[7.5rem] whitespace-nowrap">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in orderCandidates" :key="item.saleOrderGuid" class="border-t border-border">
-              <td class="px-3 py-2 font-mono text-xs">{{ item.saleOrderCode || '—' }}</td>
-              <td class="px-3 py-2">{{ item.saleOrderDate || '—' }}</td>
-              <td class="px-3 py-2 whitespace-nowrap">
-                <button
-                  type="button"
-                  class="inline-flex h-8 items-center justify-center whitespace-nowrap rounded border border-border px-3 text-xs hover:bg-muted/40 disabled:opacity-50"
-                  :disabled="busy"
-                  @click="onSelectOrder(item)"
+      <div class="space-y-4">
+        <div class="grid gap-4 text-xs md:grid-cols-2">
+          <div class="rounded-md border border-border bg-muted/10 p-3 space-y-2">
+            <div class="text-muted-foreground">识别尺寸</div>
+            <div class="font-mono">
+              <template v-if="drawingExtracted.dims?.length">
+                <span
+                  v-for="(d, i) in drawingExtracted.dims"
+                  :key="`${d.label}-${i}`"
+                  class="inline-block mr-2 mb-1 px-1.5 py-0.5 rounded border border-border bg-background"
                 >
-                  查看清单
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                  {{ d.label || '?' }}={{ d.value }}
+                </span>
+              </template>
+              <span v-else class="text-muted-foreground">—</span>
+            </div>
+          </div>
+          <div class="rounded-md border border-border bg-muted/10 p-3 space-y-2">
+            <div class="text-muted-foreground">方案说明</div>
+            <div class="text-foreground/90 whitespace-pre-wrap leading-relaxed">
+              {{ drawingExtracted.schemeText || '—' }}
+            </div>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <label class="block text-[11px] font-medium text-muted-foreground">关键词（可改，逗号分隔）</label>
+          <div class="flex flex-wrap gap-2">
+            <input
+              v-model="drawingKeywordsEdit"
+              class="flex-1 min-w-[12rem] h-9 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-iron/40"
+              placeholder="例如 直型砖，方案二"
+              :disabled="busy"
+            />
+            <button
+              type="button"
+              class="h-9 px-3 rounded-md border border-border text-xs hover:bg-muted/40 disabled:opacity-50"
+              :disabled="busy"
+              @click="onRematchDrawing"
+            >
+              <Loader2 v-if="rematchingDrawing" class="h-3.5 w-3.5 animate-spin inline mr-1" />
+              重新匹配
+            </button>
+          </div>
+        </div>
       </div>
     </Panel>
 
-    <Panel v-if="orderHeader" class="p-4 space-y-3">
-      <div class="flex flex-wrap items-center gap-3 text-sm">
-        <span class="px-2 py-0.5 rounded border text-xs border-patina/40 bg-patina/10 text-patina">订货清单</span>
-        <span class="font-mono text-xs">{{ orderHeader.saleOrderCode }}</span>
-        <span class="text-muted-foreground text-xs">{{ orderHeader.saleOrderDate || '' }}</span>
-        <span class="text-muted-foreground text-xs">{{ orderItems.length }} 种物料</span>
-      </div>
+    <Panel
+      v-if="drawingCandidates.length"
+      title="匹配候选"
+      :subtitle="`按相似度排序 · Top ${drawingCandidates.length}`"
+    >
       <div class="overflow-auto rounded-md border border-border">
         <table class="w-full text-sm">
           <thead class="bg-muted/30 text-left text-xs text-muted-foreground">
             <tr>
-              <th class="px-3 py-2">物料编码</th>
-              <th class="px-3 py-2">物料名称</th>
-              <th class="px-3 py-2">规格型号</th>
-              <th class="px-3 py-2">材质</th>
-              <th class="px-3 py-2">部位</th>
-              <th class="px-3 py-2">合同数量</th>
-              <th class="px-3 py-2">计划数量</th>
-              <th class="px-3 py-2">在制</th>
-              <th class="px-3 py-2">库存</th>
-              <th class="px-3 py-2">已排产</th>
-              <th class="px-3 py-2 w-[6rem] whitespace-nowrap">操作</th>
+              <th class="px-3 py-2.5">相似度</th>
+              <th class="px-3 py-2.5">物料编码</th>
+              <th class="px-3 py-2.5">物料名称</th>
+              <th class="px-3 py-2.5">规格</th>
+              <th class="px-3 py-2.5">A×B×H</th>
+              <th class="px-3 py-2.5">匹配说明</th>
+              <th class="px-3 py-2.5 w-[7.5rem] whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr
-              v-for="item in orderItems"
-              :key="`${item.inventoryGuid}-${item.itemIndex}`"
-              class="border-t border-border"
-              :class="selectedGuid === item.inventoryGuid ? 'bg-muted/40' : ''"
+              v-for="item in drawingCandidates"
+              :key="item.inventoryGuid"
+              class="border-t border-border hover:bg-muted/20"
+              :class="selectedGuid === item.inventoryGuid ? 'bg-iron/[0.06]' : ''"
             >
-              <td class="px-3 py-2 font-mono text-xs">{{ item.code || '—' }}</td>
-              <td class="px-3 py-2">{{ item.name || '—' }}</td>
-              <td class="px-3 py-2 text-xs text-muted-foreground">{{ item.spec || '—' }}</td>
-              <td class="px-3 py-2">{{ item.materialName || '—' }}</td>
-              <td class="px-3 py-2">{{ item.position || '—' }}</td>
-              <td class="px-3 py-2">{{ fmtNum(item.billOrderQty) }}</td>
-              <td class="px-3 py-2">{{ fmtNum(item.scheduOrderQty) }}</td>
-              <td class="px-3 py-2">{{ fmtNum(item.workingQty) }}</td>
-              <td class="px-3 py-2">{{ fmtNum(item.stockQty) }}</td>
-              <td class="px-3 py-2">{{ fmtNum(item.mpsingQty) }}</td>
-              <td class="px-3 py-2 whitespace-nowrap">
+              <td class="px-3 py-2.5 font-medium tabular-nums whitespace-nowrap text-iron">
+                {{ Number(item.similarity).toFixed(1) }}%
+              </td>
+              <td class="px-3 py-2.5 font-mono text-xs">{{ item.code || '—' }}</td>
+              <td class="px-3 py-2.5">{{ item.name || '—' }}</td>
+              <td class="px-3 py-2.5 text-xs text-muted-foreground">{{ item.spec || '—' }}</td>
+              <td class="px-3 py-2.5 font-mono text-xs">{{ item.productSize || '—' }}</td>
+              <td class="px-3 py-2.5 text-[11px] text-muted-foreground">
+                {{ (item.matchReasons || []).slice(0, 3).join('；') || '—' }}
+              </td>
+              <td class="px-3 py-2.5 whitespace-nowrap">
                 <button
                   type="button"
-                  class="inline-flex h-8 items-center justify-center whitespace-nowrap rounded border border-border px-3 text-xs hover:bg-muted/40 disabled:opacity-50"
+                  class="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md bg-iron/15 border border-iron/30 px-3 text-xs text-iron hover:bg-iron/25 disabled:opacity-50"
                   :disabled="busy"
-                  @click="onAnalyzeItem(item)"
+                  @click="onSelectDrawingCandidate(item)"
                 >
-                  <Loader2 v-if="analyzing && selectedGuid === item.inventoryGuid" class="h-3.5 w-3.5 animate-spin mr-1" />
-                  分析
+                  <Loader2
+                    v-if="analyzing && selectedGuid === item.inventoryGuid"
+                    class="h-3.5 w-3.5 animate-spin mr-1"
+                  />
+                  分析此物料
                 </button>
               </td>
-            </tr>
-            <tr v-if="!orderItems.length">
-              <td colspan="11" class="px-3 py-3 text-center text-muted-foreground">该订单没有物料行</td>
             </tr>
           </tbody>
         </table>

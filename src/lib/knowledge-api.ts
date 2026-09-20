@@ -1,4 +1,4 @@
-import { apiRequest } from './api';
+import { apiRequest, apiDownload, getApiBaseUrl, ApiError } from './api';
 import { getAccessToken } from './auth';
 
 export type KnowledgeBaseItem = {
@@ -10,6 +10,9 @@ export type KnowledgeBaseItem = {
   chunkCount: number;
   createdAt: number;
   updatedAt: number;
+  canView?: boolean;
+  canUse?: boolean;
+  canManage?: boolean;
 };
 
 export type KbDocItem = {
@@ -17,7 +20,7 @@ export type KbDocItem = {
   baseId?: string | null;
   name: string;
   source: 'file' | 'url' | 'text' | string;
-  kind?: 'doc' | '3d' | string;
+  kind?: 'doc' | '3d' | 'video' | 'image' | string;
   fileType?: string;
   size?: number;
   url?: string;
@@ -38,9 +41,22 @@ export type SearchChunk = {
   score: number;
   doc_id?: string;
   kb_id?: string;
+  kbId?: string;
   name?: string;
   chunk_index?: number;
   tags?: string[];
+  file_type?: string;
+  has_file?: boolean;
+  preview_kind?: string;
+  kind?: string;
+  startMs?: number;
+  endMs?: number;
+};
+
+export type UploadProgress = {
+  loaded: number;
+  total: number;
+  percent: number;
 };
 
 function requireToken(): string {
@@ -51,11 +67,15 @@ function requireToken(): string {
   return token;
 }
 
-export async function listKnowledgeBases(): Promise<KnowledgeBaseItem[]> {
-  const data = await apiRequest<{ items: KnowledgeBaseItem[] }>('/api/v1/knowledge/bases', {
-    token: requireToken(),
-  });
-  return data.items || [];
+export async function listKnowledgeBases(
+  access: 'view' | 'use' | 'manage' = 'view',
+): Promise<{ items: KnowledgeBaseItem[]; canCreate: boolean }> {
+  const q = access !== 'view' ? `?access=${encodeURIComponent(access)}` : '';
+  const data = await apiRequest<{ items: KnowledgeBaseItem[]; canCreate?: boolean }>(
+    `/api/v1/knowledge/bases${q}`,
+    { token: requireToken() },
+  );
+  return { items: data.items || [], canCreate: Boolean(data.canCreate) };
 }
 
 export async function createKnowledgeBase(input: {
@@ -120,6 +140,112 @@ export async function uploadKnowledgeDocument(input: {
   });
 }
 
+function parseEnvelope<T>(raw: string, status: number): T {
+  let payload: { code?: number; msg?: string; data?: T } | null = null;
+  try {
+    payload = JSON.parse(raw) as { code?: number; msg?: string; data?: T };
+  } catch {
+    throw new ApiError(status === 0 ? '服务暂时不可用，请稍后重试' : '请求失败', -1, status);
+  }
+  if (status >= 400 || payload.code !== 0) {
+    throw new ApiError(
+      (payload.msg && payload.msg.trim()) || '请求失败',
+      payload.code ?? -1,
+      status,
+    );
+  }
+  return payload.data as T;
+}
+
+async function uploadKnowledgeMultipart(
+  path: string,
+  input: {
+    baseId: string;
+    file: File;
+    name?: string;
+    tags?: string[];
+  },
+  onProgress?: (p: UploadProgress) => void,
+): Promise<{ item: KbDocItem; items: KbDocItem[] }> {
+  const form = new FormData();
+  form.append('file', input.file);
+  form.append('baseId', input.baseId);
+  const name = (input.name || input.file.name || '').trim();
+  if (name) form.append('name', name);
+  if (input.tags?.length) form.append('tags', input.tags.join(','));
+
+  const send = (token: string) =>
+    new Promise<{ item: KbDocItem; items: KbDocItem[] }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${getApiBaseUrl()}${path}`);
+      xhr.setRequestHeader('Accept', 'application/json');
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('X-Access-Token', token);
+      xhr.upload.onprogress = (ev) => {
+        if (!onProgress) return;
+        const total = ev.lengthComputable ? ev.total : input.file.size;
+        const loaded = ev.loaded;
+        const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+        onProgress({ loaded, total, percent });
+      };
+      xhr.onload = () => {
+        try {
+          resolve(parseEnvelope(xhr.responseText, xhr.status));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      xhr.onerror = () => {
+        reject(new ApiError('无法连接后端服务，请确认 API 已启动', -1, 0));
+      };
+      xhr.onabort = () => {
+        reject(new ApiError('上传已取消', -1, 0));
+      };
+      xhr.send(form);
+    });
+
+  try {
+    return await send(requireToken());
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      const { refreshTokens, getAccessToken, clearTokens } = await import('./auth');
+      const refreshed = await refreshTokens();
+      if (refreshed) {
+        const token = getAccessToken();
+        if (token) return send(token);
+      }
+      clearTokens();
+    }
+    throw e;
+  }
+}
+
+/** 视频原片 multipart 上传，后台 ASR 转写后入库检索 */
+export async function uploadKnowledgeVideo(
+  input: {
+    baseId: string;
+    file: File;
+    name?: string;
+    tags?: string[];
+  },
+  onProgress?: (p: UploadProgress) => void,
+): Promise<{ item: KbDocItem; items: KbDocItem[] }> {
+  return uploadKnowledgeMultipart('/api/v1/knowledge/documents/upload-video', input, onProgress);
+}
+
+/** 图片原件 multipart 上传，后台 OCR 识别后入库检索 */
+export async function uploadKnowledgeImage(
+  input: {
+    baseId: string;
+    file: File;
+    name?: string;
+    tags?: string[];
+  },
+  onProgress?: (p: UploadProgress) => void,
+): Promise<{ item: KbDocItem; items: KbDocItem[] }> {
+  return uploadKnowledgeMultipart('/api/v1/knowledge/documents/upload-image', input, onProgress);
+}
+
 export async function createTextDocument(input: {
   baseId: string;
   title: string;
@@ -166,7 +292,7 @@ export async function getKnowledgeDocumentPreview(
   docId: string
 ): Promise<{
   item: KbDocItem;
-  chunks: Array<{ chunkIndex: number; content: string }>;
+  chunks: Array<{ chunkIndex: number; content: string; startMs?: number; endMs?: number }>;
   content: string;
   truncated: boolean;
 }> {
@@ -176,10 +302,76 @@ export async function getKnowledgeDocumentPreview(
   );
 }
 
+export async function downloadKnowledgeDocument(
+  baseId: string,
+  docId: string,
+  fallbackName?: string
+): Promise<void> {
+  await apiDownload(
+    `/api/v1/knowledge/documents/${encodeURIComponent(docId)}/download?baseId=${encodeURIComponent(baseId)}`,
+    { token: requireToken(), fallbackName: fallbackName || 'document' }
+  );
+}
+
 export async function deleteKnowledgeDocument(baseId: string, docId: string): Promise<KbDocItem[]> {
   const data = await apiRequest<{ items: KbDocItem[] }>(
     `/api/v1/knowledge/documents/${encodeURIComponent(docId)}?baseId=${encodeURIComponent(baseId)}`,
     { method: 'DELETE', token: requireToken() }
   );
   return data.items || [];
+}
+
+export type KbAclGrant = {
+  id?: number;
+  subjectType: 'user' | 'role';
+  subjectId: number;
+  subjectLabel?: string;
+  canView: boolean;
+  canUse: boolean;
+  canManage: boolean;
+};
+
+export type KbAclPayload = {
+  baseId: string;
+  createdBy?: number | null;
+  grants: KbAclGrant[];
+  directory: {
+    users: Array<{
+      id: number;
+      username: string;
+      displayName?: string | null;
+      department?: string | null;
+    }>;
+    roles: Array<{ id: number; code: string; name: string }>;
+  };
+  note?: string;
+};
+
+export async function getKnowledgeBaseAcl(baseId: string): Promise<KbAclPayload> {
+  return apiRequest<KbAclPayload>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(baseId)}/acl`,
+    { token: requireToken() },
+  );
+}
+
+export async function saveKnowledgeBaseAcl(
+  baseId: string,
+  grants: KbAclGrant[],
+): Promise<KbAclPayload> {
+  return apiRequest<KbAclPayload>(
+    `/api/v1/knowledge/bases/${encodeURIComponent(baseId)}/acl`,
+    {
+      method: 'PUT',
+      token: requireToken(),
+      body: {
+        grants: grants.map((g) => ({
+          subjectType: g.subjectType,
+          subjectId: g.subjectId,
+          canView: g.canView,
+          canUse: g.canUse,
+          canManage: g.canManage,
+        })),
+      },
+    },
+  );
 }

@@ -29,6 +29,14 @@ export type ChatSessionMessage = {
     doc_id?: string;
     kb_id?: string;
     kbId?: string;
+    name?: string;
+    chunk_index?: number;
+    file_type?: string;
+    has_file?: boolean;
+    preview_kind?: string;
+    kind?: string;
+    startMs?: number;
+    endMs?: number;
   }[];
   knowledgeBaseIds?: string[];
   useKnowledge?: boolean;
@@ -158,6 +166,8 @@ export async function streamChat(
     promptId?: string | null;
     /** 场景智能体：服务端以智能体配置覆盖 mode/prompt/KB/工具 */
     agentId?: string | null;
+    /** 指定模型配置 id；未传则用快速/深度默认绑定 */
+    modelId?: string | null;
   },
   handlers: StreamHandlers,
   signal?: AbortSignal
@@ -166,6 +176,7 @@ export async function streamChat(
   const knowledgeBaseIds = (input.knowledgeBaseIds || []).filter(Boolean);
   const promptId = (input.promptId || '').trim() || undefined;
   const agentId = (input.agentId || '').trim() || undefined;
+  const modelId = (input.modelId || '').trim() || undefined;
   const res = await fetch(`${getApiBaseUrl()}/api/v1/ai/chat`, {
     method: 'POST',
     headers: {
@@ -181,6 +192,7 @@ export async function streamChat(
       useKnowledge: knowledgeBaseIds.length > 0,
       ...(promptId ? { promptId } : {}),
       ...(agentId ? { agentId } : {}),
+      ...(modelId ? { modelId } : {}),
     }),
     signal,
   });

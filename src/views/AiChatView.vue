@@ -24,6 +24,8 @@ import {
   Wrench,
   BookOpenText,
   Bot,
+  Film,
+  Image as ImageIcon,
 } from 'lucide-vue-next'
 import { ApiError } from '@/lib/api'
 import {
@@ -50,6 +52,22 @@ import {
   type PromptOption,
 } from '@/lib/prompts-api'
 import ChatMarkdown from '@/components/ai/ChatMarkdown.vue'
+import ChatKbVideos from '@/components/ai/ChatKbVideos.vue'
+import ChatKbImages from '@/components/ai/ChatKbImages.vue'
+import {
+  collectKbVideoHits,
+  fmtKbVideoRange,
+  isKbVideoRef,
+} from '@/lib/kb-video-contract'
+import {
+  collectKbImageHits,
+  isKbImageRef,
+} from '@/lib/kb-image-contract'
+import {
+  listModelOptions,
+  modelTypeLabel,
+  type ModelOptionItem,
+} from '@/lib/models-api'
 
 type Mode = ChatMode
 
@@ -59,6 +77,26 @@ interface RefChunk {
   doc_id?: string
   kb_id?: string
   kbId?: string
+  name?: string
+  chunk_index?: number
+  file_type?: string
+  has_file?: boolean
+  preview_kind?: string
+  kind?: string
+  startMs?: number
+  endMs?: number
+}
+
+function refTimeLabel(r: RefChunk): string {
+  return fmtKbVideoRange(r.startMs, r.endMs)
+}
+
+function kbVideos(refs: RefChunk[] | undefined) {
+  return collectKbVideoHits(refs)
+}
+
+function kbImages(refs: RefChunk[] | undefined) {
+  return collectKbImageHits(refs)
 }
 
 interface ToolCallUi {
@@ -221,6 +259,8 @@ const kbPickerOpen = ref(false)
 const promptList = ref<PromptOption[]>([])
 const selectedPromptId = ref<string | null>(null)
 const promptPickerOpen = ref(false)
+const llmOptions = ref<ModelOptionItem[]>([])
+const selectedModelId = ref('')
 const messages = ref<Msg[]>([])
 const input = ref('')
 const sending = ref(false)
@@ -257,6 +297,25 @@ const selectedPromptName = computed(() => {
 })
 const usePrompt = computed(() => Boolean(selectedPromptId.value))
 const agentBound = computed(() => Boolean(activeAgent.value))
+const selectedModel = computed(
+  () => llmOptions.value.find((m) => m.id === selectedModelId.value) || null,
+)
+
+function pickDefaultModel(preferMode: Mode = mode.value) {
+  const list = llmOptions.value
+  if (list.length === 0) {
+    selectedModelId.value = ''
+    return
+  }
+  if (selectedModelId.value && list.some((m) => m.id === selectedModelId.value)) {
+    return
+  }
+  const bound =
+    preferMode === 'deep'
+      ? list.find((m) => m.scopeDeep) || list.find((m) => m.scopeFast)
+      : list.find((m) => m.scopeFast) || list.find((m) => m.scopeDeep)
+  selectedModelId.value = (bound || list[0]).id
+}
 watch(messages, async () => {
   await nextTick()
   listRef.value?.scrollTo({
@@ -352,7 +411,7 @@ onMounted(() => {
   void (async () => {
     await loadSessions()
     try {
-      kbList.value = await listKnowledgeBases()
+      kbList.value = (await listKnowledgeBases('use')).items
     } catch {
       // 未登录或接口失败时保持空列表
     }
@@ -360,6 +419,22 @@ onMounted(() => {
       promptList.value = await listPromptOptions()
     } catch {
       // 未登录或接口失败时保持空列表
+    }
+    try {
+      llmOptions.value = await listModelOptions({ kind: 'llm' })
+      pickDefaultModel()
+      if (llmOptions.value.length === 0) {
+        toast.value = {
+          type: 'err',
+          msg: '暂无可用对话模型。请到「模型管理」新增并勾选启用，然后刷新本页。',
+        }
+      }
+    } catch (e) {
+      llmOptions.value = []
+      toast.value = {
+        type: 'err',
+        msg: e instanceof Error ? e.message : '加载模型列表失败',
+      }
     }
     const qAgent =
       typeof route.query.agentId === 'string' ? route.query.agentId.trim() : ''
@@ -577,6 +652,7 @@ async function sendQuestion(text: string) {
         knowledgeBaseIds: selectedKbIds.value,
         promptId: selectedPromptId.value,
         agentId: activeAgent.value?.id || null,
+        modelId: selectedModelId.value || null,
       },
       {
         onRefs: (chunks) => {
@@ -761,6 +837,19 @@ function resetCurrent() {
             <Brain class="size-3.5" /> 深度推理
           </button>
         </div>
+
+        <select
+          v-model="selectedModelId"
+          class="h-[34px] max-w-[220px] rounded-md border border-hairline bg-bg-base/60 px-2 text-[12px] text-text-primary disabled:opacity-40"
+          :disabled="sending || llmOptions.length === 0"
+          :title="llmOptions.length ? '本轮使用的对话模型' : '请先在模型管理中启用对话模型'"
+        >
+          <option v-if="llmOptions.length === 0" value="">暂无可用模型</option>
+          <option v-for="m in llmOptions" :key="m.id" :value="m.id">
+            {{ m.name }} · {{ modelTypeLabel(m.modelType, m.kind) }}
+            {{ m.scopeFast ? ' · 默快' : '' }}{{ m.scopeDeep ? ' · 默深' : '' }}
+          </option>
+        </select>
 
         <div ref="promptPickerRef" class="relative">
           <button
@@ -1266,6 +1355,16 @@ function resetCurrent() {
                     :content="m.content"
                     :streaming="Boolean(m.loading)"
                   />
+                  <template v-for="vids in [kbVideos(m.refs)]" :key="`vid-${m.id}`">
+                    <div v-if="vids.length" class="mt-3">
+                      <ChatKbVideos :videos="vids" />
+                    </div>
+                  </template>
+                  <template v-for="imgs in [kbImages(m.refs)]" :key="`img-${m.id}`">
+                    <div v-if="imgs.length" class="mt-3">
+                      <ChatKbImages :images="imgs" />
+                    </div>
+                  </template>
                 </div>
 
                 <details
@@ -1284,9 +1383,31 @@ function resetCurrent() {
                       :key="i"
                       class="px-2.5 py-1.5 rounded bg-bg-base/40 border border-hairline"
                     >
-                      <div class="flex justify-between text-[10px] text-text-muted font-mono mb-0.5">
-                        <span>#{{ i + 1 }}</span>
-                        <span class="text-molybdenum">
+                      <div class="flex justify-between gap-2 text-[10px] text-text-muted font-mono mb-0.5">
+                        <span class="truncate min-w-0 inline-flex items-center gap-1" :title="r.name || undefined">
+                          <Film
+                            v-if="isKbVideoRef(r)"
+                            class="size-3 shrink-0 text-iron"
+                          />
+                          <ImageIcon
+                            v-else-if="isKbImageRef(r)"
+                            class="size-3 shrink-0 text-sulfur"
+                          />
+                          #{{ i + 1 }}{{ r.name ? ` · ${r.name}` : '' }}
+                          <span
+                            v-if="isKbVideoRef(r)"
+                            class="shrink-0 rounded px-1 py-px text-[9px] bg-iron/10 text-iron border border-iron/20"
+                          >视频</span>
+                          <span
+                            v-else-if="isKbImageRef(r)"
+                            class="shrink-0 rounded px-1 py-px text-[9px] bg-sulfur/10 text-sulfur border border-sulfur/20"
+                          >图片</span>
+                          <span
+                            v-if="refTimeLabel(r)"
+                            class="shrink-0 text-text-muted"
+                          >{{ refTimeLabel(r) }}</span>
+                        </span>
+                        <span class="text-molybdenum shrink-0">
                           相似度 {{ (r.score ?? 0).toFixed(3) }}
                         </span>
                       </div>
@@ -1364,6 +1485,10 @@ function resetCurrent() {
               {{ activeSessionId ? '已关联会话' : '发送后自动新建会话' }} ·
               <span :class="mode === 'deep' ? 'text-molybdenum' : 'text-iron'">
                 {{ mode === 'deep' ? '深度推理' : '快速回答' }}
+              </span>
+              ·
+              <span :class="selectedModel ? 'text-text-primary' : 'text-text-muted'">
+                {{ selectedModel ? `模型：${selectedModel.name}` : '未选模型' }}
               </span>
               ·
               <span :class="usePrompt ? 'text-molybdenum' : 'text-text-muted'">

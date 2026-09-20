@@ -33,14 +33,18 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
+      exceljs: path.resolve(__dirname, 'node_modules/exceljs/dist/exceljs.min.js'),
     },
+  },
+  optimizeDeps: {
+    include: ['exceljs'],
   },
   server: {
     host: true,
-    port: 5173,
+    port: 5180,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8800',
         changeOrigin: true,
         timeout: 0,
         proxyTimeout: 0,

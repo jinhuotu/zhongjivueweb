@@ -60,6 +60,7 @@ import {
   Bot,
   CalendarClock,
   ShoppingCart,
+  TrendingUp,
   Warehouse,
   Search,
   Camera,
@@ -95,9 +96,13 @@ function canSeeNavItem(
   menus: string[] | null | undefined,
 ): boolean {
   if (it.adminOnly && !admin) return false
-  // menus 为空：兼容旧登录态，仅按 adminOnly
-  if (!menus || menus.length === 0) return true
-  return menus.includes(it.href)
+  if (admin) return true
+  if (!menus || menus.length === 0) return it.href === '/'
+  if (menus.includes(it.href)) return true
+  if (it.href === '/casting-peel' && menus.includes('/casting-yield')) return true
+  if (it.href === '/casting-qa-month' && menus.includes('/casting-yield')) return true
+  if (it.href === '/quality/procurement' && menus.includes('/quality/prediction')) return true
+  return false
 }
 
 export function filterNavGroups(
@@ -143,7 +148,7 @@ export function canAccessPath(
   const exact = flattenNavItems().find((it) => it.href === path)
   if (exact) return canSeeNavItem(exact, admin, menus)
   // 详情页前缀
-  if (!menus || menus.length === 0) return true
+  if (!menus || menus.length === 0) return path === '/'
   return menus.some((m) => m !== '/' && (path === m || path.startsWith(`${m}/`)))
 }
 
@@ -162,7 +167,9 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/ai-chat', label: 'AI 智能问答', icon: BotMessageSquare },
       { href: '/ai-reports', label: 'AI 智能报告', icon: FileSearch },
-      { href: '/casting-yield', label: '铸造良率分析', icon: FlaskConical },
+      { href: '/casting-yield', label: '最优工艺推荐', icon: FlaskConical },
+      { href: '/casting-peel', label: '脱棱角统计', icon: ScanLine },
+      { href: '/casting-qa-month', label: '合格率月报', icon: ClipboardList },
       { href: '/scene-agents', label: '场景智能体', icon: Sparkles, adminOnly: true },
       { href: '/workflows', label: '工作流', icon: Workflow, adminOnly: true },
       { href: '/model-manage', label: '模型管理', icon: Boxes, adminOnly: true },
@@ -314,6 +321,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: '分析层',
         items: [
           { href: '/quality/prediction', label: '质量预测分析', icon: ScanLine },
+          { href: '/quality/procurement', label: '采购预测分析', icon: TrendingUp },
           { href: '/quality/models', label: '预测模型管理', icon: FlaskConical },
           { href: '/quality/correlation', label: '工艺参数关联', icon: GitCompareArrows },
           { href: '/quality/trace', label: '质量追溯分析', icon: GitBranch },
@@ -385,6 +393,38 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ]
+
+export const CASTING_FAMILY = [
+  '/casting-yield',
+  '/casting-peel',
+  '/casting-qa-month',
+] as const
+
+export const QUALITY_PRED_FAMILY = [
+  '/quality/prediction',
+  '/quality/procurement',
+] as const
+
+export function familyOf(href: string): readonly string[] | null {
+  if ((CASTING_FAMILY as readonly string[]).includes(href)) return CASTING_FAMILY
+  if ((QUALITY_PRED_FAMILY as readonly string[]).includes(href)) return QUALITY_PRED_FAMILY
+  return null
+}
+
+export function assignableNavGroups(groups: NavGroup[] = NAV_GROUPS): {
+  title: string
+  items: NavItem[]
+}[] {
+  return groups
+    .map((g) => ({
+      title: g.title,
+      items: [
+        ...(g.items || []),
+        ...(g.children || []).flatMap((c) => c.items),
+      ].filter((it) => !it.adminOnly),
+    }))
+    .filter((g) => g.items.length > 0)
+}
 
 /** 扁平化所有导航项，用于路由 meta 标题查找 */
 export function flattenNavItems(groups: NavGroup[] = NAV_GROUPS): NavItem[] {

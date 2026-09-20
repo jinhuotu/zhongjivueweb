@@ -1,4 +1,4 @@
-import { apiRequest, getApiBaseUrl } from './api'
+import { ApiError, apiRequest, getApiBaseUrl } from './api'
 import { clearTokens, getAccessToken, refreshTokens } from './auth'
 
 function requireToken(): string {
@@ -56,6 +56,32 @@ export type InventoryCandidate = {
   name?: string | null
   spec?: string | null
   commonName?: string | null
+}
+
+export type DrawingExtracted = {
+  dims?: Array<{ label?: string; value?: number }>
+  diameters?: number[]
+  specHints?: string[]
+  schemeText?: string
+  keywords?: string[]
+  confidence?: number | null
+}
+
+export type DrawingMatchCandidate = InventoryCandidate & {
+  productSize?: string | null
+  sizeA?: number | null
+  sizeB?: number | null
+  sizeH?: number | null
+  similarity: number
+  matchReasons?: string[]
+}
+
+export type DrawingMatchResult = {
+  extracted: DrawingExtracted
+  candidates: DrawingMatchCandidate[]
+  candidateCount?: number
+  warnings?: string[]
+  message?: string
 }
 
 export type SaleOrderCandidate = {
@@ -534,6 +560,90 @@ async function readCastingSse(
   throw new Error('未收到分析结果')
 }
 
+async function parseDrawingMatchResponse(res: Response): Promise<DrawingMatchResult> {
+  let payload: { code?: number; msg?: string; data?: DrawingMatchResult } | null = null
+  try {
+    payload = (await res.json()) as { code?: number; msg?: string; data?: DrawingMatchResult }
+  } catch {
+    throw new ApiError(res.statusText || '图纸匹配失败', -1, res.status)
+  }
+  if (!res.ok || payload.code !== 0 || !payload.data) {
+    throw new ApiError(payload.msg || '图纸匹配失败', payload.code ?? -1, res.status)
+  }
+  return payload.data
+}
+
+/** 上传图纸 → 多模态识参 → Top5 相似度物料 */
+export async function matchCastingDrawing(input: {
+  file: File
+  extracted?: DrawingExtracted | null
+  mode?: string
+  top?: number
+  visionModelId?: string | null
+}): Promise<DrawingMatchResult> {
+  const token = requireToken()
+  const form = new FormData()
+  form.append('file', input.file)
+  form.append('mode', input.mode || 'fast')
+  form.append('top', String(input.top ?? 5))
+  if (input.visionModelId?.trim()) {
+    form.append('visionModelId', input.visionModelId.trim())
+  }
+  if (input.extracted) {
+    form.append('extracted', JSON.stringify(input.extracted))
+  }
+
+  const doFetch = async (accessToken: string) =>
+    fetch(`${getApiBaseUrl()}/api/v1/casting/drawing-match`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: form,
+      signal: withTimeoutSignal(CASTING_DOC_TIMEOUT_MS),
+    })
+
+  try {
+    let res = await doFetch(token)
+    if (res.status === 401) {
+      const refreshed = await refreshTokens()
+      if (refreshed) {
+        res = await doFetch(getAccessToken() || '')
+      } else {
+        clearTokens()
+        throw new ApiError('登录已过期或未登录，请重新登录后再试', 40100, 401)
+      }
+    }
+    return await parseDrawingMatchResponse(res)
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    if (isTimeoutOrAbort(e)) {
+      throw new Error('图纸识参超时，请稍后重试或换一张更清晰的图')
+    }
+    throw e
+  }
+}
+
+/** 用已修正抽参重新匹配（不传图） */
+export async function rematchCastingDrawing(
+  extracted: DrawingExtracted,
+  top = 5,
+): Promise<DrawingMatchResult> {
+  try {
+    return await castingRequest<DrawingMatchResult>('/api/v1/casting/drawing-match/json', {
+      extracted,
+      top,
+      mode: 'fast',
+    })
+  } catch (e) {
+    if (isTimeoutOrAbort(e)) {
+      throw new Error('重新匹配超时，请稍后重试')
+    }
+    throw e
+  }
+}
+
 export async function streamCastingYieldAnalysis(
   input: { inventoryGuid?: string; query?: string; orderContext?: Record<string, unknown> },
   handlers: { onProgress?: (p: CastingProgress) => void; signal?: AbortSignal },
@@ -594,4 +704,126 @@ export async function streamCastingYieldDocument(
     }
     throw e
   }
+}
+
+export type PeelMetrics = {
+  brickCnt: number
+  peelCnt: number
+  peelRate: number | null
+}
+
+export type PeelTableRow = {
+  kind: 'shift' | 'furnaceTotal' | 'grandTotal' | 'shiftTotal'
+  furnaceName: string
+  shiftName: string
+  total: PeelMetrics
+  byDate: Record<string, PeelMetrics>
+}
+
+export type PeelPieSlice = PeelMetrics & { name: string }
+
+export type PeelPositionSlice = {
+  name: string
+  peelCnt: number
+  share: number
+}
+
+export type PeelReportResult = {
+  found: boolean
+  message: string
+  contractCode: string
+  dateFrom?: string | null
+  dateTo?: string | null
+  specCnt: number
+  specs?: Array<{
+    inventoryGuid: string
+    code?: string | null
+    name?: string | null
+    spec?: string | null
+    materialName?: string | null
+  }>
+  rules?: {
+    peelCode?: string
+    peelName?: string
+    excludeCodes?: string[]
+    brickScope?: string
+    materialLike?: string
+  }
+  dates: string[]
+  furnaces: string[]
+  shifts: string[]
+  rows: PeelTableRow[]
+  furnacePie: PeelPieSlice[]
+  shiftPie: PeelPieSlice[]
+  dailyBars: Array<Record<string, string | number>>
+  positionPie: PeelPositionSlice[]
+  summary: PeelMetrics
+  warnings?: string[]
+}
+
+export async function queryCastingPeelReport(input: {
+  contractCode: string
+  dateFrom?: string
+  dateTo?: string
+  materialLike?: string
+}): Promise<PeelReportResult> {
+  return castingRequest<PeelReportResult>('/api/v1/casting/peel-report', {
+    contractCode: input.contractCode.trim(),
+    dateFrom: input.dateFrom?.trim() || null,
+    dateTo: input.dateTo?.trim() || null,
+    materialLike: input.materialLike?.trim() || 'PT',
+  })
+}
+
+export type QaDefectItem = {
+  name: string
+  rate: number | null
+}
+
+export type QaSection = {
+  inputTon: number | null
+  passTon: number | null
+  yieldRate: number | null
+  topDefects: QaDefectItem[]
+  details: string
+}
+
+export type WechatDailyParseResult = {
+  kind: 'daily' | 'weekly' | 'unknown'
+  reportDate?: string | null
+  year?: number | null
+  month?: number | null
+  day?: number | null
+  casting: QaSection
+  machining: QaSection
+  taiShu: number | null
+  heGeRate: number | null
+  firstRate: number | null
+  secondRate: number | null
+  recycleRate: number | null
+  targetRate: number | null
+  firstDeviation: number | null
+  secondDeviation: number | null
+  firstDetails: string
+  secondDetails: string
+  warnings?: string[]
+  parseSource?: string
+}
+
+export async function parseWechatDaily(input: {
+  text: string
+  year: number
+  month: number
+  useLlm?: boolean
+}): Promise<WechatDailyParseResult> {
+  return apiRequest<WechatDailyParseResult>('/api/v1/casting/wechat-daily-parse', {
+    method: 'POST',
+    token: requireToken(),
+    body: {
+      text: input.text,
+      year: input.year,
+      month: input.month,
+      useLlm: input.useLlm !== false,
+    },
+  })
 }

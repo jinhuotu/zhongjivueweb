@@ -18,9 +18,14 @@ import {
   createModelConfig,
   deleteModelConfig,
   listModelConfigs,
+  modelTypeLabel,
+  coerceModelType,
   updateModelConfig,
+  EMBEDDING_MODEL_TYPE_OPTIONS,
+  LLM_MODEL_TYPE_OPTIONS,
   type ModelConfigItem,
   type ModelKind,
+  type ModelType,
 } from '@/lib/models-api'
 import AppDialog from '@/components/ui/AppDialog.vue'
 import AppAlertDialog from '@/components/ui/AppAlertDialog.vue'
@@ -28,6 +33,7 @@ import AppAlertDialog from '@/components/ui/AppAlertDialog.vue'
 type FormState = {
   name: string
   kind: ModelKind
+  modelType: ModelType
   apiBase: string
   apiKey: string
   modelName: string
@@ -41,10 +47,15 @@ type FormState = {
   scopeEmbedding: boolean
 }
 
+function defaultModelType(kind: ModelKind): ModelType {
+  return kind === 'embedding' ? 'text_embedding' : 'text_chat'
+}
+
 function emptyForm(kind: ModelKind = 'llm'): FormState {
   return {
     name: '',
     kind,
+    modelType: defaultModelType(kind),
     apiBase: '',
     apiKey: '',
     modelName: '',
@@ -77,6 +88,10 @@ const toast = ref<{ type: 'ok' | 'err'; msg: string } | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
 const kindOptions: ModelKind[] = ['llm', 'embedding']
+
+const modelTypeOptions = computed(() =>
+  form.value.kind === 'embedding' ? EMBEDDING_MODEL_TYPE_OPTIONS : LLM_MODEL_TYPE_OPTIONS,
+)
 
 const filtered = computed(() => {
   if (tab.value === 'all') return items.value
@@ -134,6 +149,7 @@ function openEdit(item: ModelConfigItem) {
   form.value = {
     name: item.name,
     kind: item.kind,
+    modelType: coerceModelType(item.modelType, item.kind),
     apiBase: item.apiBase,
     apiKey: '',
     modelName: item.modelName,
@@ -157,6 +173,8 @@ function onModalOpen(v: boolean) {
 }
 
 function switchKind(k: ModelKind) {
+  if (editing.value) return
+  if (k !== 'llm' && k !== 'embedding') return
   const f = form.value
   form.value = {
     ...emptyForm(k),
@@ -169,7 +187,7 @@ function switchKind(k: ModelKind) {
 async function submit() {
   if (saving.value) return
   if (!form.value.name.trim() || !form.value.apiBase.trim() || !form.value.modelName.trim()) {
-    formError.value = '请填写名称、API Base、Model 名称'
+    formError.value = '请填写名称、API Base、模型标识'
     return
   }
   if (!editing.value && !form.value.apiKey.trim()) {
@@ -183,6 +201,7 @@ async function submit() {
     const payload = {
       name: f.name.trim(),
       kind: f.kind,
+      modelType: f.kind === 'embedding' ? 'text_embedding' : f.modelType,
       apiBase: f.apiBase.trim(),
       modelName: f.modelName.trim(),
       timeoutSeconds: Number(f.timeoutSeconds) || 120,
@@ -265,8 +284,7 @@ function onDeleteOpen(v: boolean) {
           模型管理
         </h1>
         <p class="mt-1 text-[12px] text-text-secondary">
-配置 OpenAI 兼容的对话模型与 Embedding 模型。
-Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度可分别绑定）。
+          配置 OpenAI 兼容的对话模型与 Embedding 模型。勾选「启用」后即可在智能问答等页面选择使用；「快速/深度」只是该模式的默认模型（每模式一条），不会禁用其它已启用模型。
         </p>
       </div>
       <div class="flex gap-2">
@@ -318,7 +336,7 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
       v-else-if="filtered.length === 0"
       class="py-16 text-center text-[12px] text-text-muted border border-dashed border-hairline rounded-lg"
     >
-      暂无配置。请先新增对话模型 / Embedding，并勾选用途绑定。
+      暂无配置。请先新增并启用对话模型 / Embedding。
     </div>
     <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <div
@@ -334,13 +352,18 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
               </span>
               <span
                 :class="[
-                  'px-1.5 py-0.5 rounded text-[10px] font-mono border',
+                  'px-1.5 py-0.5 rounded text-[10px] border',
                   item.kind === 'llm'
                     ? 'text-iron border-iron/30 bg-iron/10'
                     : 'text-molybdenum border-molybdenum/30 bg-molybdenum/10',
                 ]"
               >
-                {{ item.kind === 'llm' ? 'LLM' : 'EMBED' }}
+                {{ modelTypeLabel(item.modelType, item.kind) }}
+              </span>
+              <span
+                class="px-1.5 py-0.5 rounded text-[10px] text-text-muted border border-hairline"
+              >
+                {{ item.kind === 'llm' ? 'LLM' : 'Embedding' }}
               </span>
               <span
                 v-if="!item.enabled"
@@ -349,8 +372,11 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
                 已停用
               </span>
             </div>
-            <div class="mt-1 text-[11px] font-mono text-text-muted truncate">
-              {{ item.modelName }} · {{ item.apiBase }}
+            <div class="mt-1 text-[11px] text-text-muted truncate">
+              模型标识
+              <span class="font-mono text-text-secondary">{{ item.modelName }}</span>
+              <span class="mx-1">·</span>
+              <span class="font-mono">{{ item.apiBase }}</span>
             </div>
           </div>
           <div class="flex items-center gap-0.5 shrink-0">
@@ -401,7 +427,7 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
             v-if="item.kind === 'llm' && !item.scopeFast && !item.scopeDeep"
             class="text-text-muted"
           >
-            未绑定问答用途
+            可在对话中选择（非默认）
           </span>
           <span
             v-if="item.kind === 'embedding' && !item.scopeEmbedding"
@@ -420,22 +446,43 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
       @update:open="onModalOpen"
     >
       <div class="space-y-3 -mx-0">
-        <div v-if="!editing" class="flex gap-2">
-          <button
-            v-for="k in kindOptions"
-            :key="k"
-            type="button"
-            :class="[
-              'flex-1 h-9 rounded-md text-[12px] border transition-colors',
-              form.kind === k
-                ? 'border-iron bg-iron/10 text-iron'
-                : 'border-hairline text-text-secondary',
-            ]"
-            @click="switchKind(k)"
-          >
-            {{ k === 'llm' ? '对话模型 (LLM)' : 'Embedding' }}
-          </button>
+        <div class="block">
+          <div class="text-[11px] text-text-secondary mb-1">接口类别</div>
+          <div class="flex gap-2">
+            <button
+              v-for="k in kindOptions"
+              :key="k"
+              type="button"
+              :disabled="Boolean(editing)"
+              :class="[
+                'flex-1 h-9 rounded-md text-[12px] border transition-colors',
+                form.kind === k
+                  ? 'border-iron bg-iron/10 text-iron'
+                  : 'border-hairline text-text-secondary',
+                editing ? 'opacity-70 cursor-not-allowed' : '',
+              ]"
+              @click="switchKind(k)"
+            >
+              {{ k === 'llm' ? '对话模型 (LLM)' : 'Embedding' }}
+            </button>
+          </div>
         </div>
+
+        <label class="block">
+          <div class="text-[11px] text-text-secondary mb-1">模型类型</div>
+          <select v-model="form.modelType" class="kb-input" :disabled="form.kind === 'embedding'">
+            <option v-for="opt in modelTypeOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <div class="mt-1 text-[10.5px] text-text-muted">
+            {{
+              form.kind === 'embedding'
+                ? 'Embedding 固定为文本向量，用于知识库检索。'
+                : '文本对话用于问答；多模态视觉/音频用于图文或语音输入。'
+            }}
+          </div>
+        </label>
 
         <label class="block">
           <div class="text-[11px] text-text-secondary mb-1">名称</div>
@@ -466,12 +513,15 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
           />
         </label>
         <label class="block">
-          <div class="text-[11px] text-text-secondary mb-1">Model 名称</div>
+          <div class="text-[11px] text-text-secondary mb-1">模型标识</div>
           <input
             v-model="form.modelName"
             class="kb-input"
-            :placeholder="form.kind === 'llm' ? 'gpt-4o-mini' : 'text-embedding-3-small'"
+            :placeholder="form.kind === 'llm' ? '如：gpt-4o-mini / deepseek-chat' : '如：text-embedding-3-small'"
           />
+          <div class="mt-1 text-[10.5px] text-text-muted">
+            调用 API 时传入的 model 参数，需与服务商控制台中的模型 ID 一致。
+          </div>
         </label>
         <div class="grid grid-cols-2 gap-3">
           <label v-if="form.kind === 'llm'" class="block">
@@ -502,7 +552,7 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
 
         <label class="flex items-center gap-2 text-[12px] text-text-secondary">
           <input v-model="form.enabled" type="checkbox" />
-          启用
+          启用（可在对话等页面中选择使用）
         </label>
 
         <div
@@ -510,7 +560,7 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
           class="space-y-2 rounded-md border border-hairline p-3"
         >
           <div class="text-[11px] text-text-muted">
-            绑定到智能问答（可多条配置，每用途仅生效一条）
+            设为智能问答的默认模型（对话页仍可另选其它已启用模型）。每模式仅一条默认，勾选后会替换原默认，不会删除其它模型。
           </div>
           <label class="flex items-center gap-2 text-[12px]">
             <input v-model="form.scopeFast" type="checkbox" />
@@ -598,9 +648,11 @@ Embedding 仅用于知识库；智能问答只使用对话模型（快速/深度
 :deep(.kb-input::placeholder) {
   color: var(--text-muted);
 }
-:deep(.kb-input:focus) {
-  outline: none;
-  border-color: var(--accent-molybdenum);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-molybdenum) 18%, transparent);
+:deep(.kb-input:disabled) {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+:deep(select.kb-input) {
+  font-family: inherit;
 }
 </style>

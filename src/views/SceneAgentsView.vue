@@ -114,11 +114,11 @@ function flattenTools(servers: McpServerItem[]): ToolOption[] {
 async function loadRefs() {
   const [prompts, bases, servers] = await Promise.all([
     listPrompts().catch(() => [] as PromptItem[]),
-    listKnowledgeBases().catch(() => [] as KnowledgeBaseItem[]),
+    listKnowledgeBases('use').catch(() => ({ items: [] as KnowledgeBaseItem[], canCreate: false })),
     listMcpServers().catch(() => [] as McpServerItem[]),
   ])
   promptOptions.value = prompts
-  kbList.value = bases
+  kbList.value = bases.items
   toolOptions.value = flattenTools(servers)
 }
 
