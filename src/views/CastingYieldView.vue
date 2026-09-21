@@ -1,23 +1,39 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { EChartsOption } from 'echarts'
 import VChart from 'vue-echarts'
-import { FlaskConical, Loader2, FileText, CloudSun, Copy, Download, ImagePlus, X, ScanLine } from 'lucide-vue-next'
+import {
+  FlaskConical,
+  Loader2,
+  FileText,
+  CloudSun,
+  Copy,
+  Download,
+  ImagePlus,
+  X,
+  ScanLine,
+  Search,
+  ClipboardList,
+} from 'lucide-vue-next'
 import { Panel } from '@/components/ui-kit'
 import ChatMarkdown from '@/components/ai/ChatMarkdown.vue'
 import { ensureEcharts } from '@/components/ui-kit/charts/register'
 import { tooltipBase, useChartPalette } from '@/components/ui-kit/charts/theme'
 import { ApiError } from '@/lib/api'
 import {
+  downloadCastingYieldDocx,
+  loadCastingOrderItems,
   matchCastingDrawing,
   rematchCastingDrawing,
+  searchCastingOrders,
   streamCastingYieldAnalysis,
   streamCastingYieldDocument,
   type DrawingExtracted,
   type DrawingMatchCandidate,
   type InventoryCandidate,
   type ProcessRow,
+  type SaleOrderCandidate,
   type SaleOrderItem,
   type WeatherYieldBlock,
   type YieldAnalysisResult,
@@ -39,18 +55,35 @@ const candidates = ref<InventoryCandidate[]>([])
 const drawingCandidates = ref<DrawingMatchCandidate[]>([])
 const drawingExtracted = ref<DrawingExtracted | null>(null)
 const drawingFileName = ref('')
+const drawingFile = ref<File | null>(null)
 const drawingPreviewUrl = ref('')
 const matchingDrawing = ref(false)
 const rematchingDrawing = ref(false)
 const drawingKeywordsEdit = ref('')
 const markdown = ref('')
 const prompts = ref<PromptItem[]>([])
-const analyzedItem = ref<SaleOrderItem | null>(null)
+type AnalyzeTarget = Partial<SaleOrderItem> & { inventoryGuid: string }
+type EntryMode = 'drawing' | 'order'
+
+const analyzedItem = ref<AnalyzeTarget | null>(null)
 const promptId = ref('')
 const visionModels = ref<ModelOptionItem[]>([])
 const visionModelId = ref('')
 const textModelHint = ref('')
 const copied = ref(false)
+
+const entryMode = ref<EntryMode>('drawing')
+const orderQuery = ref('')
+const orderSuggestions = ref<SaleOrderCandidate[]>([])
+const orderNeedSelect = ref<SaleOrderCandidate[]>([])
+const orderItems = ref<SaleOrderItem[]>([])
+const loadedOrder = ref<SaleOrderCandidate | null>(null)
+const suggestingOrder = ref(false)
+const queryingOrder = ref(false)
+const loadingOrderItems = ref(false)
+const orderSuggestOpen = ref(false)
+let orderSearchTimer: ReturnType<typeof setTimeout> | null = null
+let orderSearchAbort: AbortController | null = null
 
 const PROGRESS_STEPS = [
   { id: 'match', label: '正在匹配物料' },
@@ -64,7 +97,13 @@ const progressStep = ref('')
 const progressLabel = ref('')
 
 const busy = computed(
-  () => analyzing.value || generating.value || matchingDrawing.value || rematchingDrawing.value,
+  () =>
+    analyzing.value ||
+    generating.value ||
+    matchingDrawing.value ||
+    rematchingDrawing.value ||
+    queryingOrder.value ||
+    loadingOrderItems.value,
 )
 const showProgress = computed(() => busy.value && !!progressStep.value)
 const visibleSteps = computed(() =>
@@ -407,20 +446,36 @@ function fmtNum(v?: number | string | null) {
   return String(v)
 }
 
-function buildOrderContext(item?: SaleOrderItem | null) {
+function buildOrderContext(item?: AnalyzeTarget | null) {
   const it = item || analyzedItem.value
-  if (!it) return undefined
-  return {
-    inventoryGuid: it.inventoryGuid || selectedGuid.value,
-    code: it.code,
-    name: it.name,
-    spec: it.spec,
-    materialName: it.materialName,
-    position: it.position,
+  if (!it?.inventoryGuid && !selectedGuid.value) return undefined
+  const ctx: Record<string, unknown> = {
+    inventoryGuid: it?.inventoryGuid || selectedGuid.value,
   }
+  if (!it) return ctx
+  const keys = [
+    'saleOrderGuid',
+    'saleOrderCode',
+    'saleOrderDate',
+    'code',
+    'name',
+    'spec',
+    'materialName',
+    'position',
+    'billOrderQty',
+    'scheduOrderQty',
+    'workingQty',
+    'stockQty',
+    'mpsingQty',
+  ] as const
+  for (const key of keys) {
+    const val = it[key]
+    if (val !== undefined && val !== null && val !== '') ctx[key] = val
+  }
+  return ctx
 }
 
-function analyzePayload(item?: SaleOrderItem | null) {
+function analyzePayload(item?: AnalyzeTarget | null) {
   const body: { inventoryGuid: string; orderContext?: ReturnType<typeof buildOrderContext> } = {
     inventoryGuid: selectedGuid.value.trim(),
   }
@@ -496,12 +551,13 @@ function applyResult(data: YieldAnalysisResult, kind: 'analyze' | 'generate') {
 
   if (kind === 'analyze') toast.value = '分析完成'
   else {
-    const parts: string[] = []
-    if (data.fileExport?.ok && data.fileExport.path) parts.push(`已写入本地：${data.fileExport.path}`)
-    else if (data.fileExport && !data.fileExport.ok) {
-      parts.push(`本地写入失败：${data.fileExport.error || '未知错误'}`)
+    const parts: string[] = ['文档已生成']
+    if (data.fileExport?.ok && data.fileExport.path) {
+      parts.push(`服务器另存：${data.fileExport.path}`)
+    } else if (data.fileExport && !data.fileExport.ok) {
+      parts.push(`服务器另存失败：${data.fileExport.error || '未知错误'}`)
     }
-    toast.value = parts.length ? parts.join('；') : '文档已生成'
+    toast.value = parts.join('；')
   }
 }
 
@@ -529,8 +585,165 @@ function clearDrawingPreview() {
 function clearDrawingFile() {
   clearDrawingPreview()
   drawingFileName.value = ''
+  drawingFile.value = null
   const input = document.getElementById('casting-drawing-input') as HTMLInputElement | null
   if (input) input.value = ''
+}
+
+function setEntryMode(mode: EntryMode) {
+  if (entryMode.value === mode) return
+  entryMode.value = mode
+  error.value = ''
+  toast.value = ''
+  orderSuggestOpen.value = false
+}
+
+function errMsg(e: unknown, fallback: string) {
+  return e instanceof ApiError ? e.message : e instanceof Error ? e.message : fallback
+}
+
+function clearOrderSearchTimer() {
+  if (orderSearchTimer) {
+    clearTimeout(orderSearchTimer)
+    orderSearchTimer = null
+  }
+}
+
+function abortOrderSearch() {
+  orderSearchAbort?.abort()
+  orderSearchAbort = null
+}
+
+async function suggestOrders() {
+  const q = orderQuery.value.trim()
+  if (q.length < 2) {
+    orderSuggestions.value = []
+    suggestingOrder.value = false
+    return
+  }
+  abortOrderSearch()
+  const ac = new AbortController()
+  orderSearchAbort = ac
+  suggestingOrder.value = true
+  try {
+    const data = await searchCastingOrders({ query: q, top: 12, signal: ac.signal })
+    if (orderSearchAbort !== ac) return
+    orderSuggestions.value = data.items || []
+    orderSuggestOpen.value = true
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') return
+    if (ac.signal.aborted) return
+    orderSuggestions.value = []
+  } finally {
+    if (orderSearchAbort === ac) suggestingOrder.value = false
+  }
+}
+
+watch(orderQuery, () => {
+  clearOrderSearchTimer()
+  const q = orderQuery.value.trim()
+  if (q.length < 2) {
+    abortOrderSearch()
+    orderSuggestions.value = []
+    suggestingOrder.value = false
+    return
+  }
+  orderSearchTimer = setTimeout(() => {
+    void suggestOrders()
+  }, 280)
+})
+
+function clearDrawingMatch() {
+  drawingCandidates.value = []
+  drawingExtracted.value = null
+  drawingKeywordsEdit.value = ''
+}
+
+function clearOrderMatch() {
+  orderNeedSelect.value = []
+  orderItems.value = []
+  loadedOrder.value = null
+}
+
+async function loadOrder(input: { saleOrderGuid?: string; saleOrderCode?: string }) {
+  error.value = ''
+  toast.value = ''
+  orderNeedSelect.value = []
+  orderSuggestOpen.value = false
+  loadingOrderItems.value = true
+  try {
+    const data = await loadCastingOrderItems(input)
+    if (!data.found) {
+      orderItems.value = []
+      loadedOrder.value = null
+      error.value = data.message || '没有该订单编号的订货清单'
+      return
+    }
+    clearDrawingMatch()
+    candidates.value = []
+    orderItems.value = data.items || []
+    loadedOrder.value = data.order
+    orderSuggestions.value = []
+    toast.value = data.message
+    if (data.order?.saleOrderCode) orderQuery.value = data.order.saleOrderCode
+  } catch (e) {
+    orderItems.value = []
+    loadedOrder.value = null
+    error.value = errMsg(e, '订货清单查询失败')
+  } finally {
+    loadingOrderItems.value = false
+  }
+}
+
+async function onQueryOrder() {
+  const q = orderQuery.value.trim()
+  if (!q) {
+    error.value = '请输入订货清单编号（销售订单号，不是合同号）'
+    return
+  }
+  abortOrderSearch()
+  clearOrderSearchTimer()
+  error.value = ''
+  toast.value = ''
+  queryingOrder.value = true
+  orderSuggestOpen.value = false
+  try {
+    const data = await searchCastingOrders({ query: q, top: 12 })
+    const items = data.items || []
+    if (!items.length) {
+      clearOrderMatch()
+      error.value = '没有该订单编号'
+      return
+    }
+    const exact = items.filter((it) => (it.saleOrderCode || '').toLowerCase() === q.toLowerCase())
+    if (items.length === 1 || exact.length === 1) {
+      const hit = exact[0] || items[0]
+      await loadOrder({
+        saleOrderGuid: hit.saleOrderGuid,
+        saleOrderCode: hit.saleOrderCode || q,
+      })
+      return
+    }
+    orderNeedSelect.value = exact.length > 1 ? exact : items
+    orderItems.value = []
+    loadedOrder.value = null
+    toast.value = '找到多条订单，请点选后再加载订货清单'
+  } catch (e) {
+    clearOrderMatch()
+    error.value = errMsg(e, '订单检索失败')
+  } finally {
+    queryingOrder.value = false
+  }
+}
+
+function onPickOrder(item: SaleOrderCandidate) {
+  orderQuery.value = item.saleOrderCode || orderQuery.value
+  orderSuggestions.value = []
+  orderSuggestOpen.value = false
+  void loadOrder({
+    saleOrderGuid: item.saleOrderGuid,
+    saleOrderCode: item.saleOrderCode || undefined,
+  })
 }
 
 function pickDrawingFile() {
@@ -540,8 +753,9 @@ function pickDrawingFile() {
 
 function onDrawingFileChange(ev: Event) {
   const input = ev.target as HTMLInputElement
-  const file = input.files?.[0]
+  const file = input.files?.[0] || null
   clearDrawingPreview()
+  drawingFile.value = file
   drawingFileName.value = file?.name || ''
   error.value = ''
   toast.value = ''
@@ -559,6 +773,7 @@ function onDrawingDrop(ev: DragEvent) {
     return
   }
   clearDrawingPreview()
+  drawingFile.value = file
   drawingFileName.value = file.name
   drawingPreviewUrl.value = URL.createObjectURL(file)
   error.value = ''
@@ -584,8 +799,7 @@ function buildExtractedFromEdit(): DrawingExtracted | null {
 async function onMatchDrawing() {
   error.value = ''
   toast.value = ''
-  const input = document.getElementById('casting-drawing-input') as HTMLInputElement | null
-  const file = input?.files?.[0]
+  const file = drawingFile.value
   if (!file) {
     error.value = '请先选择要上传的图纸图片'
     return
@@ -603,6 +817,7 @@ async function onMatchDrawing() {
     drawingKeywordsEdit.value = (data.extracted.keywords || []).join('，')
     drawingCandidates.value = data.candidates || []
     candidates.value = []
+    clearOrderMatch()
     if (data.warnings?.length) {
       toast.value = data.warnings.join('；')
     } else if (data.message) {
@@ -654,7 +869,7 @@ async function onSelectDrawingCandidate(item: DrawingMatchCandidate) {
   })
 }
 
-async function onAnalyzeItem(item: SaleOrderItem) {
+async function onAnalyzeItem(item: AnalyzeTarget) {
   error.value = ''
   toast.value = ''
   markdown.value = ''
@@ -685,7 +900,7 @@ async function onGenerate() {
   error.value = ''
   toast.value = ''
   if (!result.value?.found || !result.value.inventoryGuid) {
-    error.value = '请先从图纸匹配结果中选择物料并完成分析，再导出文档'
+    error.value = '请先选择物料并完成分析，再导出文档'
     return
   }
   if (!result.value.rawContext?.trim()) {
@@ -704,10 +919,21 @@ async function onGenerate() {
         inventory: result.value.inventory,
         orderContext: buildOrderContext(),
         insights: result.value.insights,
+        exportToFilesystem: false,
       },
       { onProgress },
     )
     applyResult(data, 'generate')
+    const md = (data.markdown || markdown.value || '').trim()
+    if (md) {
+      progressLabel.value = '正在下载 Word'
+      await downloadCastingYieldDocx({
+        markdown: md,
+        inventoryName: data.inventory?.name || result.value?.inventory?.name,
+        inventoryCode: data.inventory?.code || result.value?.inventory?.code,
+      })
+      toast.value = '已开始下载 Word 文档'
+    }
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : '生成失败'
   } finally {
@@ -731,17 +957,18 @@ async function copyMarkdown() {
   }
 }
 
-function downloadMarkdown() {
-  if (!markdown.value) return
-  const name = result.value?.inventory?.name || result.value?.inventory?.code || '良率分析'
-  const blob = new Blob([markdown.value], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${name}_良率分析.md`
-  a.click()
-  URL.revokeObjectURL(url)
-  toast.value = '已开始下载'
+async function downloadDocx() {
+  if (!markdown.value?.trim()) return
+  try {
+    await downloadCastingYieldDocx({
+      markdown: markdown.value,
+      inventoryName: result.value?.inventory?.name,
+      inventoryCode: result.value?.inventory?.code,
+    })
+    toast.value = '已开始下载 Word 文档'
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : '下载失败'
+  }
 }
 
 function stepState(id: string) {
@@ -760,6 +987,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearDrawingPreview()
+  clearOrderSearchTimer()
+  abortOrderSearch()
 })
 </script>
 
@@ -773,7 +1002,7 @@ onUnmounted(() => {
       <div>
         <h1 class="text-lg font-semibold tracking-tight">最优工艺推荐</h1>
         <p class="text-sm text-muted-foreground mt-0.5">
-          上传图纸识参匹配物料，结合同型号历史生产数据推荐最优工艺，并可导出文档
+          上传图纸识参，或输入订货清单编号查询本单物料，再结合同型号历史数据推荐最优工艺
         </p>
       </div>
     </div>
@@ -787,10 +1016,38 @@ onUnmounted(() => {
     </div>
 
     <Panel
-      title="图纸识参匹配"
-      subtitle="选择视觉模型并上传图纸；匹配物料后由文本模型完成分析与总结"
+      :title="entryMode === 'drawing' ? '图纸识参匹配' : '按订货单号查询'"
+      :subtitle="
+        entryMode === 'drawing'
+          ? '选择视觉模型并上传图纸；匹配物料后由文本模型完成分析与总结'
+          : '输入销售订单编号（SaleOrderCode）查询订货清单；不是脱棱角页用的合同号'
+      "
     >
       <div class="space-y-5">
+        <div class="inline-flex rounded-md border border-border p-0.5 text-sm">
+          <button
+            type="button"
+            class="h-8 px-3 rounded inline-flex items-center gap-1.5 disabled:opacity-50"
+            :class="entryMode === 'drawing' ? 'bg-iron text-white' : 'text-muted-foreground hover:bg-muted/40'"
+            :disabled="busy"
+            @click="setEntryMode('drawing')"
+          >
+            <ImagePlus class="h-3.5 w-3.5" />
+            图纸识参
+          </button>
+          <button
+            type="button"
+            class="h-8 px-3 rounded inline-flex items-center gap-1.5 disabled:opacity-50"
+            :class="entryMode === 'order' ? 'bg-iron text-white' : 'text-muted-foreground hover:bg-muted/40'"
+            :disabled="busy"
+            @click="setEntryMode('order')"
+          >
+            <ClipboardList class="h-3.5 w-3.5" />
+            订货单号
+          </button>
+        </div>
+
+        <template v-if="entryMode === 'drawing'">
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="block space-y-1.5">
             <span class="text-[11px] font-medium text-muted-foreground tracking-wide">识参 · 多模态视觉</span>
@@ -914,6 +1171,59 @@ onUnmounted(() => {
             识别并匹配
           </button>
         </div>
+        </template>
+
+        <div v-else class="space-y-3">
+          <div class="relative">
+            <label class="block space-y-1.5">
+              <span class="text-[11px] font-medium text-muted-foreground tracking-wide">订货清单编号</span>
+              <div class="flex gap-2">
+                <div class="relative flex-1 min-w-0">
+                  <input
+                    v-model="orderQuery"
+                    class="w-full h-10 px-3 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-iron/40"
+                    placeholder="例如 25120311"
+                    autocomplete="off"
+                    :disabled="busy"
+                    @focus="orderSuggestOpen = orderSuggestions.length > 0"
+                    @blur="orderSuggestOpen = false"
+                    @keydown.enter.prevent="onQueryOrder"
+                    @keydown.escape="orderSuggestOpen = false"
+                  />
+                  <div
+                    v-if="orderSuggestOpen && orderSuggestions.length"
+                    class="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-border bg-background shadow-md"
+                  >
+                    <button
+                      v-for="item in orderSuggestions"
+                      :key="item.saleOrderGuid"
+                      type="button"
+                      class="w-full px-3 py-2 text-left text-sm hover:bg-muted/40 flex items-center justify-between gap-2"
+                      @mousedown.prevent="onPickOrder(item)"
+                    >
+                      <span class="font-mono">{{ item.saleOrderCode || '—' }}</span>
+                      <span class="text-[11px] text-muted-foreground">{{ item.saleOrderDate || '' }}</span>
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="h-10 px-4 shrink-0 inline-flex items-center gap-1.5 rounded-md bg-iron text-white text-sm font-medium hover:brightness-110 disabled:opacity-50"
+                  :disabled="busy || !orderQuery.trim()"
+                  @click="onQueryOrder"
+                >
+                  <Loader2 v-if="queryingOrder || loadingOrderItems" class="h-4 w-4 animate-spin" />
+                  <Search v-else class="h-4 w-4" />
+                  查询订单
+                </button>
+              </div>
+            </label>
+            <p class="mt-1.5 text-[11px] text-muted-foreground">
+              输入时会联想订单编号；点选或回车即可加载本单物料。
+              <span v-if="suggestingOrder">正在检索…</span>
+            </p>
+          </div>
+        </div>
 
         <div v-if="showProgress" class="rounded-md border border-border bg-muted/20 p-3 space-y-2">
           <div class="text-xs font-medium">{{ progressLabel || '处理中…' }}</div>
@@ -947,7 +1257,7 @@ onUnmounted(() => {
     </Panel>
 
     <Panel
-      v-if="drawingExtracted"
+      v-if="entryMode === 'drawing' && drawingExtracted"
       title="识参结果"
       :subtitle="
         drawingExtracted.confidence != null
@@ -1003,7 +1313,7 @@ onUnmounted(() => {
     </Panel>
 
     <Panel
-      v-if="drawingCandidates.length"
+      v-if="entryMode === 'drawing' && drawingCandidates.length"
       title="匹配候选"
       :subtitle="`按相似度排序 · Top ${drawingCandidates.length}`"
     >
@@ -1049,6 +1359,109 @@ onUnmounted(() => {
                     class="h-3.5 w-3.5 animate-spin mr-1"
                   />
                   分析此物料
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+
+    <Panel
+      v-if="entryMode === 'order' && orderNeedSelect.length"
+      title="订单候选"
+      :subtitle="`共 ${orderNeedSelect.length} 条，请点选后加载订货清单`"
+    >
+      <div class="overflow-auto rounded-md border border-border">
+        <table class="w-full text-sm">
+          <thead class="bg-muted/30 text-left text-xs text-muted-foreground">
+            <tr>
+              <th class="px-3 py-2.5">订单编号</th>
+              <th class="px-3 py-2.5">订单日期</th>
+              <th class="px-3 py-2.5 w-[7.5rem] whitespace-nowrap">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="item in orderNeedSelect"
+              :key="item.saleOrderGuid"
+              class="border-t border-border hover:bg-muted/20"
+            >
+              <td class="px-3 py-2.5 font-mono">{{ item.saleOrderCode || '—' }}</td>
+              <td class="px-3 py-2.5 text-muted-foreground">{{ item.saleOrderDate || '—' }}</td>
+              <td class="px-3 py-2.5 whitespace-nowrap">
+                <button
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md bg-iron/15 border border-iron/30 px-3 text-xs text-iron hover:bg-iron/25 disabled:opacity-50"
+                  :disabled="busy"
+                  @click="onPickOrder(item)"
+                >
+                  加载清单
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+
+    <Panel
+      v-if="entryMode === 'order' && orderItems.length"
+      title="订货清单"
+      :subtitle="
+        loadedOrder?.saleOrderCode
+          ? `订单 ${loadedOrder.saleOrderCode}${loadedOrder.saleOrderDate ? ' · ' + loadedOrder.saleOrderDate : ''} · ${orderItems.length} 种物料`
+          : `${orderItems.length} 种物料`
+      "
+    >
+      <div class="overflow-auto rounded-md border border-border">
+        <table class="w-full text-sm">
+          <thead class="bg-muted/30 text-left text-xs text-muted-foreground">
+            <tr>
+              <th class="px-3 py-2.5 whitespace-nowrap">行号</th>
+              <th class="px-3 py-2.5">物料编码</th>
+              <th class="px-3 py-2.5">物料名称</th>
+              <th class="px-3 py-2.5">规格</th>
+              <th class="px-3 py-2.5">材质</th>
+              <th class="px-3 py-2.5">部位</th>
+              <th class="px-3 py-2.5 text-right whitespace-nowrap">合同数量</th>
+              <th class="px-3 py-2.5 text-right whitespace-nowrap">计划数量</th>
+              <th class="px-3 py-2.5 text-right whitespace-nowrap">在制</th>
+              <th class="px-3 py-2.5 text-right whitespace-nowrap">库存</th>
+              <th class="px-3 py-2.5 text-right whitespace-nowrap">已排产</th>
+              <th class="px-3 py-2.5 w-[7.5rem] whitespace-nowrap">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="item in orderItems"
+              :key="`${item.saleOrderGuid}-${item.inventoryGuid}-${item.itemIndex ?? 0}`"
+              class="border-t border-border hover:bg-muted/20"
+              :class="selectedGuid === item.inventoryGuid ? 'bg-iron/[0.06]' : ''"
+            >
+              <td class="px-3 py-2.5 tabular-nums text-muted-foreground">{{ fmtNum(item.itemIndex) }}</td>
+              <td class="px-3 py-2.5 font-mono text-xs">{{ item.code || '—' }}</td>
+              <td class="px-3 py-2.5">{{ item.name || '—' }}</td>
+              <td class="px-3 py-2.5 text-xs text-muted-foreground">{{ item.spec || '—' }}</td>
+              <td class="px-3 py-2.5 text-xs">{{ item.materialName || '—' }}</td>
+              <td class="px-3 py-2.5 text-xs text-muted-foreground">{{ item.position || '—' }}</td>
+              <td class="px-3 py-2.5 text-right tabular-nums">{{ fmtNum(item.billOrderQty) }}</td>
+              <td class="px-3 py-2.5 text-right tabular-nums">{{ fmtNum(item.scheduOrderQty) }}</td>
+              <td class="px-3 py-2.5 text-right tabular-nums">{{ fmtNum(item.workingQty) }}</td>
+              <td class="px-3 py-2.5 text-right tabular-nums">{{ fmtNum(item.stockQty) }}</td>
+              <td class="px-3 py-2.5 text-right tabular-nums">{{ fmtNum(item.mpsingQty) }}</td>
+              <td class="px-3 py-2.5 whitespace-nowrap">
+                <button
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md bg-iron/15 border border-iron/30 px-3 text-xs text-iron hover:bg-iron/25 disabled:opacity-50"
+                  :disabled="busy || !item.inventoryGuid"
+                  @click="onAnalyzeItem(item)"
+                >
+                  <Loader2
+                    v-if="analyzing && selectedGuid === item.inventoryGuid"
+                    class="h-3.5 w-3.5 animate-spin mr-1"
+                  />
+                  分析
                 </button>
               </td>
             </tr>
@@ -1751,13 +2164,13 @@ onUnmounted(() => {
           <button
             type="button"
             class="h-8 px-3 inline-flex items-center gap-1 rounded border border-border text-xs hover:bg-muted/40"
-            @click="downloadMarkdown"
+            @click="downloadDocx"
           >
             <Download class="h-3.5 w-3.5" />
-            下载
+            下载 Word
           </button>
           <div v-if="result?.fileExport?.ok && result.fileExport.path" class="text-[11px] text-patina font-mono">
-            已写入：{{ result.fileExport.path }}
+            服务器另存：{{ result.fileExport.path }}
           </div>
         </div>
       </div>

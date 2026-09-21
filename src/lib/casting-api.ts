@@ -1,4 +1,4 @@
-import { ApiError, apiRequest, getApiBaseUrl } from './api'
+import { ApiError, apiDownloadPost, apiRequest, getApiBaseUrl } from './api'
 import { clearTokens, getAccessToken, refreshTokens } from './auth'
 
 function requireToken(): string {
@@ -400,7 +400,7 @@ export async function generateCastingYieldDocument(input: {
   const body: Record<string, unknown> = {
     includeWeather: true,
     promptId: input.promptId || undefined,
-    exportToFilesystem: true,
+    exportToFilesystem: input.exportToFilesystem === true,
     mode: input.mode || 'deep',
   }
   if (input.inventoryGuid?.trim()) body.inventoryGuid = input.inventoryGuid.trim()
@@ -673,12 +673,13 @@ export async function streamCastingYieldDocument(
     inventory?: YieldAnalysisResult['inventory']
     orderContext?: Record<string, unknown>
     insights?: YieldAnalysisResult['insights']
+    exportToFilesystem?: boolean
   },
   handlers: { onProgress?: (p: CastingProgress) => void; signal?: AbortSignal },
 ): Promise<YieldAnalysisResult> {
   const body: Record<string, unknown> = {
     includeWeather: true,
-    exportToFilesystem: true,
+    exportToFilesystem: input.exportToFilesystem === true,
     mode: 'deep',
     promptId: input.promptId || undefined,
   }
@@ -699,11 +700,38 @@ export async function streamCastingYieldDocument(
   } catch (e) {
     if (isTimeoutOrAbort(e)) {
       throw new Error(
-        '生成超时：后端可能仍在写文档。请稍后查看本机导出目录，或重启 API 后再试。',
+        '生成超时：后端可能仍在写文档。请稍后重试，或重启 API 后再试。',
       )
     }
     throw e
   }
+}
+
+/** 将已生成的 Markdown 转为 Word 并触发浏览器下载 */
+export async function downloadCastingYieldDocx(input: {
+  markdown: string
+  inventoryName?: string | null
+  inventoryCode?: string | null
+  filename?: string
+}): Promise<void> {
+  const md = input.markdown.trim()
+  if (!md) throw new Error('文档内容为空，无法导出')
+  const name =
+    (input.inventoryName || input.inventoryCode || '良率分析').replace(
+      /[<>:"/\\|?*\u0000-\u001f]/g,
+      '_',
+    ) || '良率分析'
+  const fallbackName = input.filename?.trim() || `${name}_良率分析.docx`
+  await apiDownloadPost('/api/v1/casting/yield-document/export-docx', {
+    token: requireToken(),
+    fallbackName,
+    body: {
+      markdown: md,
+      inventoryName: input.inventoryName || undefined,
+      inventoryCode: input.inventoryCode || undefined,
+      filename: input.filename || undefined,
+    },
+  })
 }
 
 export type PeelMetrics = {

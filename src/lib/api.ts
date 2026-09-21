@@ -172,6 +172,67 @@ export async function apiDownload(
     throw new ApiError(friendlyMessage(res.status, msg), -1, res.status)
   }
 
+  await triggerBlobDownload(res, fallbackName)
+}
+
+/** POST 带鉴权下载（如 Markdown→Word） */
+export async function apiDownloadPost(
+  path: string,
+  options: {
+    token?: string | null
+    body?: unknown
+    fallbackName?: string
+    _retry?: boolean
+  } = {},
+): Promise<void> {
+  const { token, body, fallbackName = 'download.bin', _retry } = options
+  const headers: Record<string, string> = {
+    Accept: '*/*',
+    'Content-Type': 'application/json',
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  let res: Response
+  try {
+    res = await fetch(`${getApiBaseUrl()}${path}`, {
+      method: 'POST',
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError('无法连接后端服务，请确认 API 已启动', -1, 0)
+  }
+
+  if (res.status === 401 && token && !_retry) {
+    const { refreshTokens, getAccessToken, clearTokens } = await import('./auth')
+    const refreshed = await refreshTokens()
+    if (refreshed) {
+      return apiDownloadPost(path, {
+        token: getAccessToken(),
+        body,
+        fallbackName,
+        _retry: true,
+      })
+    }
+    clearTokens()
+    throw new ApiError(friendlyMessage(401), 40100, 401)
+  }
+
+  if (!res.ok) {
+    let msg = res.statusText
+    try {
+      const j = (await res.json()) as { msg?: string }
+      if (j?.msg) msg = j.msg
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(friendlyMessage(res.status, msg), -1, res.status)
+  }
+
+  await triggerBlobDownload(res, fallbackName)
+}
+
+async function triggerBlobDownload(res: Response, fallbackName: string): Promise<void> {
   const blob = await res.blob()
   let filename = fallbackName
   const cd = res.headers.get('Content-Disposition') || ''
