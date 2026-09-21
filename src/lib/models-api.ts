@@ -94,10 +94,12 @@ export type ModelOptionItem = {
 }
 
 function toOptionItem(
-  item: Pick<
-    ModelConfigItem,
-    'id' | 'name' | 'kind' | 'modelType' | 'modelName' | 'scopeFast' | 'scopeDeep' | 'scopeEmbedding'
-  > & { model_type?: string }
+  item: Pick<ModelConfigItem, 'id' | 'name' | 'kind' | 'modelType' | 'modelName'> & {
+    model_type?: string
+    scopeFast?: boolean
+    scopeDeep?: boolean
+    scopeEmbedding?: boolean
+  },
 ): ModelOptionItem {
   return {
     id: item.id,

@@ -22,6 +22,7 @@ import {
   updateKnowledgeBase,
   type KnowledgeBaseItem,
 } from '@/lib/knowledge-api'
+import { ApiError } from '@/lib/api'
 import { libraryCardAccentByName } from '@/lib/library-card-theme'
 import KbAclDialog from '@/components/knowledge/KbAclDialog.vue'
 
