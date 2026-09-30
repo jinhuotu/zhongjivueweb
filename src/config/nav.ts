@@ -388,7 +388,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/reports', label: '统计报表', icon: FileChartColumn },
       { href: '/alerts', label: '告警中心', icon: Bell },
       { href: '/users', label: '用户与权限', icon: Users, adminOnly: true },
-      { href: '/logs', label: '操作与登录日志', icon: History, adminOnly: true },
+      { href: '/logs', label: '审计日志', icon: History },
       { href: '/settings', label: '系统设置', icon: Settings },
     ],
   },

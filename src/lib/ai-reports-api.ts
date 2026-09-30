@@ -156,34 +156,57 @@ export async function streamGenerateReport(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  const consumeBlock = (block: string) => {
+    let event = 'message';
+    const dataParts: string[] = [];
+    for (const raw of block.split('\n')) {
+      const ln = raw.replace(/\r$/, '');
+      if (ln.startsWith('event:')) event = ln.slice(6).trim();
+      else if (ln.startsWith('data:')) dataParts.push(ln.slice(5).replace(/^\s/, ''));
+    }
+    const data = dataParts.join('\n');
+    if (!data) return;
+    try {
+      const payload = JSON.parse(data);
+      if (event === 'meta') handlers.onMeta?.(payload);
+      else if (event === 'step_start' || event === 'step_end')
+        handlers.onStep?.(event, payload);
+      else if (event === 'delta') handlers.onDelta?.(String(payload.text || ''));
+      else if (event === 'done') handlers.onDone?.(payload);
+      else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));
+    } catch {
+      // ignore parse errors
+    }
+  };
 
+  const drain = () => {
+    // sse_starlette 默认用 CRLF，必须先归一成 \n 再按空行分帧
+    buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     let idx: number;
     while ((idx = buffer.indexOf('\n\n')) !== -1) {
       const block = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 2);
-      const lines = block.split('\n');
-      let event = 'message';
-      let data = '';
-      for (const ln of lines) {
-        if (ln.startsWith('event: ')) event = ln.slice(7).trim();
-        else if (ln.startsWith('data: ')) data += ln.slice(6);
+      consumeBlock(block);
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      if (done) {
+        buffer += decoder.decode();
+        drain();
+        if (buffer.trim()) consumeBlock(buffer);
+        break;
       }
-      if (!data) continue;
-      try {
-        const payload = JSON.parse(data);
-        if (event === 'meta') handlers.onMeta?.(payload);
-        else if (event === 'step_start' || event === 'step_end')
-          handlers.onStep?.(event, payload);
-        else if (event === 'delta') handlers.onDelta?.(String(payload.text || ''));
-        else if (event === 'done') handlers.onDone?.(payload);
-        else if (event === 'error') handlers.onError?.(String(payload.msg || 'error'));
-      } catch {
-        // ignore parse errors
-      }
+      drain();
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
     }
   }
 }

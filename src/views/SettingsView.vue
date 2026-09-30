@@ -45,7 +45,7 @@ const sysInfo: [string, string][] = [
 const security = [
   { name: '双因子登录 (TOTP)', desc: '管理员强制开启' },
   { name: 'IP 白名单', desc: '仅允许内网 + 堡垒机' },
-  { name: '操作审计日志', desc: '留存 ≥ 6 个月' },
+  { name: '操作审计日志', desc: '运维窗口可配；合规侧默认 ≥ 180 天' },
   { name: '敏感数据脱敏', desc: '手机号 / 报告对外展示' },
   { name: 'SSO 单点登录', desc: '对接 OA OAuth 2.0' },
   { name: '数据加密传输', desc: 'TLS 1.3 + SM4 国密' },
