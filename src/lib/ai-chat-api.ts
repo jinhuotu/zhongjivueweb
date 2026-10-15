@@ -1,3 +1,11 @@
+// ============================================================================
+// 【中文注解】src/lib/ai-chat-api.ts | AI对话SSE客户端（refs→delta→done）
+// - 会话CRUD：list/create/get/update/delete/cancel(放锁)/summarize-title，均REST+token。
+// - streamChat：fetch POST /ai/chat text/event-stream，按\n\n分帧解析event/data，
+//   回调onRefs(知识块)/onDelta(增量)/onTool(MCP调用)/onDone/onError；AbortSignal可取消。
+// - 服务端权威：只发本轮content，历史由Redis组装；传agentId则服务端覆盖mode/prompt/KB/工具。
+// - 只加注释，未改逻辑。
+// ============================================================================
 import { apiRequest, getApiBaseUrl } from './api';
 import { getAccessToken } from './auth';
 

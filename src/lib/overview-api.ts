@@ -1,3 +1,14 @@
+// ============================================================================
+// 【中文注解】src/lib/overview-api.ts + stores/auth.ts + lib/ai-chat-api.ts | 首页/登录态/AI对话
+// - overview-api：getOverview(kilnCode) GET /overview并normalizeOverview兜底空字段，
+//   类型OverviewData即首页KPI/24h曲线/结构/告警；缺token先抛“请先登录”。
+// - stores/auth(pinia)：user/loading/isAdmin/menus；bootstrap()开机用token调fetchMe
+//   恢复，失败试refresh；login/logout供LoginView/守卫用；router.beforeEach靠它鉴权。
+// - ai-chat-api：会话CRUD+streamChat直连POST /ai/chat的SSE；事件refs→delta*→tool→done/error，
+//   只传本轮content+sessionId，历史由后端Redis组装；agentId/promptId/KB/modelId为可选覆盖。
+// - 后端对应：routers/overview.py→services/overview.py；routers/auth.py；routers/ai.py。
+// - 只加注释，未改逻辑。
+// ============================================================================
 import { apiRequest } from './api';
 import { getAccessToken } from './auth';
 import type { FurnaceItem } from './furnaces-api';

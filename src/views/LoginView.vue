@@ -1,3 +1,12 @@
+<!-- ============================================================================
+  【中文注解】src/views/LoginView.vue | 登录页（最简单的完整前后端例子）
+  - <script setup>：username/password双向绑定；onSubmit调auth.login→成功按?next回跳，
+    失败按ApiError/断网分别给中文提示；submitting防重复点。
+  - <template>：auth.loading校验中/已登录显示过渡；否则左右分栏(品牌+表单)，
+    表单@submit.prevent阻止刷新。样式全Tailwind，Flame/UserRound为图标。
+  - 后端对应：POST /api/v1/auth/login，默认admin/Admin@123456。
+  - 只加注释，未改逻辑。
+  ============================================================================ -->
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'

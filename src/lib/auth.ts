@@ -1,3 +1,11 @@
+// ============================================================================
+// 【中文注解】src/lib/auth.ts | Token存取+登录/刷新/取我（localStorage持久登录）
+// - ACCESS/REFRESH_KEY：localStorage键名，后端login下发后setTokens存入。
+// - login()：POST /auth/login，成功自动存双token；fetchMe()：GET /auth/me恢复用户+menus。
+// - refreshTokens()：用refresh换新对+重新fetchMe，失败清掉(踢回登录)；api.ts401时被调用。
+// - logout()：仅清本地，前端路由守卫会跳/login。后端refresh不查库故无失效接口。
+// - 只加注释，未改逻辑。
+// ============================================================================
 import { apiRequest } from './api'
 
 const ACCESS_KEY = 'zhongji_access_token'

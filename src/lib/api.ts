@@ -1,3 +1,12 @@
+// ============================================================================
+// 【中文注解】src/lib/api.ts | 前端唯一HTTP网关（REST+自动刷新token）
+// - getApiBaseUrl：优先VITE_API_BASE_URL，开发空串走Vite代理同源/api避免跨域。
+// - ApiEnvelope：对应后端{code,msg,data}，code===0才算成功。
+// - apiRequest：fetch封装+JSON解析+401自动refresh重试一次(_retry防循环)+友好中文报错。
+// - apiDownload/apiDownloadPost/apiFetchBlob：带鉴权下文件/预览，注意401同样会刷新。
+// - 学习：先读此文件再看各 *-api.ts，它们都是拼URL+调apiRequest。
+// - 只加注释，未改逻辑。
+// ============================================================================
 export type ApiEnvelope<T> = {
   code: number
   msg: string

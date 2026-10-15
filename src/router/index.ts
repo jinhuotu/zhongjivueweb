@@ -1,3 +1,13 @@
+// ============================================================================
+// 【中文注解】src/router/index.ts | 前端路由表+三重守卫（登录/管理员/菜单）
+// - MIGRATED_VIEWS：path→懒加载页面，已迁移页走真实View，否则Placeholder占位。
+// - buildFeatureRoutes：按左侧导航nav.ts批量生成路由，/production/*带system参数，
+//   另加知识库详情/工作流编辑/生产系统三个动态路由。
+// - beforeEach：未登录非public一律去/login(带next回跳)；已登录进/login回/；
+//   adminOnly需isAdmin；其余按后端下发menus做canAccessPath菜单鉴权。
+// - afterEach：设标题+关移动菜单+记录顶部页签。新增页面三步：建View→加MIGRATED→改nav。
+// - 只加注释，未改逻辑。
+// ============================================================================
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import type { Component } from 'vue'
 import { canAccessPath, flattenNavItems } from '@/config/nav'

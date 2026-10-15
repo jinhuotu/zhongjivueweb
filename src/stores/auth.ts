@@ -1,3 +1,9 @@
+// ============================================================================
+// 【中文注解】src/stores/auth.ts | 全局登录态(pinia)：user/isAdmin/menus+守卫依据
+// - bootstrap()：有token就fetchMe恢复，无则直接空；失败自动refresh再试一次。
+// - 详见 overview-api.ts 头部合注；后端对应 GET /auth/me(含menus并集)。
+// - 只加注释，未改逻辑。
+// ============================================================================
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import {
