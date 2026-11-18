@@ -244,6 +244,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Zap,
     items: [
       { href: '/energy', label: '能耗分析 & 对标', icon: Zap },
+      { href: '/kiln-cycles', label: '窑炉机理建模', icon: GitCompareArrows },
       { href: '/energy-flow', label: '能流分析 · 桑基图', icon: Waypoints },
       { href: '/optimization', label: '节能优化', icon: Sparkles },
       { href: '/budget', label: '用能 & 碳预算', icon: Wallet },

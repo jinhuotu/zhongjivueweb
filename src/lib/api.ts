@@ -7,6 +7,8 @@
 // - 学习：先读此文件再看各 *-api.ts，它们都是拼URL+调apiRequest。
 // - 只加注释，未改逻辑。
 // ============================================================================
+import { apiErrorMessage } from './api-errors'
+
 export type ApiEnvelope<T> = {
   code: number
   msg: string
@@ -40,6 +42,7 @@ export class ApiError extends Error {
 type RequestOptions = {
   method?: string
   body?: unknown
+  form?: FormData
   token?: string | null
   signal?: AbortSignal
   /** internal: already retried after token refresh */
@@ -73,11 +76,11 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const { method = 'GET', body, token, signal, _retry } = options
+  const { method = 'GET', body, form, token, signal, _retry } = options
   const headers: Record<string, string> = {
     Accept: 'application/json',
   }
-  if (body !== undefined) {
+  if (form === undefined && body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
   if (token) {
@@ -89,7 +92,7 @@ export async function apiRequest<T>(
     res = await fetch(`${getApiBaseUrl()}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
       signal,
     })
   } catch (e) {
@@ -131,13 +134,13 @@ export async function apiRequest<T>(
       })
     }
     clearTokens()
-    throw new ApiError(friendlyMessage(401, payload.msg), payload.code ?? 40100, 401)
+    throw new ApiError(friendlyMessage(401, apiErrorMessage(payload)), payload?.code ?? 40100, 401)
   }
 
-  if (!res.ok || payload.code !== 0) {
+  if (!res.ok || payload?.code !== 0) {
     throw new ApiError(
-      friendlyMessage(res.status, payload.msg),
-      payload.code ?? -1,
+      friendlyMessage(res.status, apiErrorMessage(payload)),
+      payload?.code ?? -1,
       res.status,
     )
   }

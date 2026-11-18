@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   Check,
   History,
@@ -254,6 +254,12 @@ async function onSend() {
       </template>
       <template #actions>
         <span v-if="toast" class="font-mono text-[12px] text-patina">{{ toast }}</span>
+        <RouterLink
+          to="/kiln-cycles"
+          class="h-8 px-3 text-[12px] rounded-md border border-border inline-flex items-center hover:bg-muted/40"
+        >
+          窑次预测
+        </RouterLink>
       </template>
     </PageHeader>
 

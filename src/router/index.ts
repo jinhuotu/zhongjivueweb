@@ -98,6 +98,7 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/production/batching': () => import('@/views/ProductionScadaView.vue'),
   '/production/shuttle': () => import('@/views/ProductionScadaView.vue'),
   '/furnaces': () => import('@/views/FurnacesView.vue'),
+  '/kiln-cycles': () => import('@/views/KilnStudioView.vue'),
   '/devices': () => import('@/views/DevicesView.vue'),
   '/reports': () => import('@/views/ReportsView.vue'),
   '/alerts': () => import('@/views/AlertsView.vue'),
@@ -128,6 +129,12 @@ function buildFeatureRoutes(): RouteRecordRaw[] {
   }
 
   routes.push(
+    {
+      path: 'kiln-cycles/legacy',
+      name: 'kiln-cycles-legacy',
+      component: () => import('@/views/KilnCycleView.vue'),
+      meta: { title: '历史窑次回放' },
+    },
     {
       path: 'knowledge/:baseId',
       name: 'knowledge-detail',
