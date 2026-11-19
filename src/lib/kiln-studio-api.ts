@@ -1,4 +1,4 @@
-import { apiRequest, getApiBaseUrl } from './api'
+import { apiDownload, apiRequest, getApiBaseUrl } from './api'
 import { getAccessToken } from './auth'
 
 export type Task = 'temperature' | 'energy' | 'afr'
@@ -17,7 +17,8 @@ type Level = 'high' | 'medium' | 'low'
 export type AlgorithmMetadata = {
   key: AlgorithmKey; name: string; category: string; oneLine: string
   strengths: string[]; benefits: string[]; fitScenarios: string[]; limitations: string[]; dataRequirements: string[]
-  interpretability: Level; sampleSizeRisk: Level; interventionCapable: boolean; status: AlgorithmStatus; version: string
+  interpretability: Level; sampleSizeRisk: Level; inferenceComplexity?: Level | null
+  interventionCapable: boolean; status: AlgorithmStatus; version: string
   formula: string; explanation: string; mechanismRole: string
   baseKey?: 'ridge' | 'boosting' | null
   tuning?: AlgorithmTuning | null
@@ -47,7 +48,7 @@ export type AlgorithmRecommendationResponse = {
 }
 export type Mapping = { column: string; field: string; scale: number; offset: number }
 export type Source = { id: string; fileId: string; file: string; location: string; text: string }
-export type StudioFile = { id: string; path: string; kind: string; status: string; message: string; size: number; sources: Source[]; columns?: { id: string; label: string; sample: string }[]; mapping?: Mapping[]; standard?: boolean; rowCount?: number }
+export type StudioFile = { id: string; path: string; kind: string; status: string; message: string; size: number; sources: Source[]; uploadedAt?: string; parsedAt?: string; columns?: { id: string; label: string; sample: string }[]; mapping?: Mapping[]; standard?: boolean; rowCount?: number }
 export type Parameters = { ambientC: number; lhvMJ: number; efficiency: number; capacityKJ: number; lossKW: number; tauMinutes: number; theoreticalAfr: number; excessAir: number; minGas: number }
 export type BaseAsset = { id: string; projectId: string; kind: string; title: string; createdAt: string }
 export type Project = BaseAsset & { status: string; files: StudioFile[]; conflicts: string[]; archiveSummary?: { archiveCount: number; nestedArchiveCount: number; maxDepth: number; expandedEntries: number; expandedBytes: number; tableCount: number; attentionCount: number }; equipmentSuggestion?: { zoneCount: number | null; burnerCount: number | null; dataZoneCount: number | null; evidence: Source[] } }
@@ -107,6 +108,7 @@ export type ZoneObservationTrend = {
 type AlgorithmIdentity = Pick<AlgorithmMetadata, 'key' | 'name' | 'formula' | 'explanation' | 'mechanismRole'>
 export type Algorithm = AlgorithmIdentity & Partial<Omit<AlgorithmMetadata, keyof AlgorithmIdentity>> & {
   available: boolean; note: string; validation: Metric | null; test: Metric | null
+  inferenceBenchmark?: PredictionEvaluation['inferenceBenchmark']
   predictionOffsets?: number[]
 }
 export type LockableParameter = 'capacityKJ' | 'lossKW' | 'tauMinutes'
@@ -116,7 +118,7 @@ export type ExperimentPoint = {
   cumulative?: Partial<Record<AlgorithmKey, number>>
   [field: string]: string | number | null | Partial<Record<AlgorithmKey, number>> | undefined
 }
-export type Experiment = BaseAsset & { datasetId: string; mechanismId: string; config: ExperimentConfig; parameters: Parameters; calibration: string[]; algorithms: Algorithm[]; points: ExperimentPoint[]; split: { name: string; count: number; from: string; to: string; cycles: string[] }[]; splitMethod: string; featureNames: string[]; warnings: string[]; unit: string; mechanismVersion: string; sourceKind: string; observationQuality?: { sentinelRows: number; zeroTemperatureRows: number; excludeZeroTemperatureRecords: boolean } }
+export type Experiment = BaseAsset & { datasetId: string; mechanismId: string; config: ExperimentConfig; parameters: Parameters; calibration: string[]; algorithms: Algorithm[]; points: ExperimentPoint[]; split: { name: string; count: number; from: string; to: string; cycles: string[] }[]; splitMethod: string; featureNames: string[]; warnings: string[]; unit: string; mechanismVersion: string; sourceKind: string; observationQuality?: { sentinelRows: number; zeroTemperatureRows: number; excludeZeroTemperatureRecords: boolean; gasCounterResets?: number; counterNonzeroStart?: boolean; frozenRows?: number; longestFreezeMinutes?: number } }
 export type Selection = { experimentId: string; algorithm: AlgorithmKey }
 export type Bundle = BaseAsset & { datasetId: string; version: string; artifactHash: string; status: string; validationStatus: string; dataFlow: string; manifest: { task: Task; experimentId: string; algorithm: AlgorithmKey; algorithmName: string; mechanismId: string; mechanismVersion: string; dataHash: string; parameters: Parameters; config: ExperimentConfig; validation: Metric; test: Metric; mechanismRole: string; unit: string }[] }
 export type Job = BaseAsset & { operation: string; status: string; progress: number; message: string; error: string | null; resultId: string | null }
@@ -242,14 +244,27 @@ export type Simulation = { cursor: string; cycle: string; temperatureOffsetC: nu
 const prefix = '/api/v1/kiln-studio'
 export function studioGet<T>(path: string): Promise<T> { return apiRequest<T>(prefix + path, { token: getAccessToken() }) }
 export function studioPost<T>(path: string, body: unknown): Promise<T> { return apiRequest<T>(prefix + path, { method: 'POST', body, token: getAccessToken() }) }
+export function deleteStudioFile(projectId: string, fileId: string): Promise<{ deletedId: string }> {
+  return apiRequest(prefix + `/projects/${projectId}/files/${fileId}`, { method: 'DELETE', token: getAccessToken() })
+}
+export function downloadStudioFile(projectId: string, file: StudioFile): Promise<void> {
+  return apiDownload(prefix + `/projects/${projectId}/files/${file.id}/download`, { token: getAccessToken(), fallbackName: file.path.split('/').pop() })
+}
+export function appendStudioFiles(projectId: string, files: File[]): Promise<Job> {
+  const form = new FormData()
+  files.forEach(file => form.append('files', file))
+  return apiRequest(prefix + `/projects/${projectId}/files`, { method: 'POST', form, token: getAccessToken() })
+}
 export function importExternalAlgorithm(file: File, spec: ExternalAlgorithmSpec): Promise<AlgorithmMetadata> {
   const form = new FormData()
   form.append('file', file)
   form.append('spec', JSON.stringify(spec))
   return apiRequest(prefix + '/algorithm-library/external', { method: 'POST', form, token: getAccessToken() })
 }
-export function recommendAlgorithms(projectId: string, body: AlgorithmRecommendationRequest, signal?: AbortSignal): Promise<AlgorithmRecommendationResponse> {
-  return apiRequest(prefix + `/projects/${projectId}/algorithm-recommendation`, { method: 'POST', body, token: getAccessToken(), signal })
+export function recommendAlgorithms(projectId: string, body: AlgorithmRecommendationRequest, signal?: AbortSignal, rulesOnly = false): Promise<AlgorithmRecommendationResponse> {
+  return apiRequest(prefix + `/projects/${projectId}/algorithm-recommendation${rulesOnly ? '?rulesOnly=true' : ''}`, {
+    method: 'POST', body, token: getAccessToken(), signal,
+  })
 }
 export function createReplay(projectId: string, body: ReplayRequest): Promise<Job> {
   return studioPost(`/projects/${projectId}/replays`, body)

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check } from 'lucide-vue-next'
-import { algorithmCards, compareValidationScores, hasUsableBacktest } from '@/lib/kiln-studio-state'
+import { ArrowRight, Check, Workflow } from 'lucide-vue-next'
+import KilnMiniSparkline from './KilnMiniSparkline.vue'
+import { algorithmCards, algorithmPrediction, compareValidationScores, hasUsableBacktest } from '@/lib/kiln-studio-state'
 import { algorithmTuningLabel, formatKilnNumber as fmt, formatKilnReading } from '@/lib/kiln-studio-format'
-import type { AlgorithmKey, AlgorithmMetadata, AlgorithmRecommendationCard, Experiment } from '@/lib/kiln-studio-api'
+import type { AlgorithmKey, AlgorithmMetadata, AlgorithmRecommendationCard, Experiment, ExperimentPoint } from '@/lib/kiln-studio-api'
 
 const props = defineProps<{
   library: AlgorithmMetadata[]
   experiment?: Experiment
+  selectionMatchesExperiment: boolean
   split: 'validation' | 'test'
   comparison?: Experiment
   selected?: AlgorithmKey
@@ -20,10 +22,10 @@ const cards = computed(() => algorithmCards(props.library, props.experiment?.alg
   const item = card.historical ? (card.result ?? card.definition!) : (card.definition ?? card.result!)
   const advice = props.advice?.find(value => value.key === item.key)
   const status = card.definition?.status
-  const unavailable = (!card.historical && !!card.result && !hasUsableBacktest(card.result)) ||
+  const unavailable = (props.selectionMatchesExperiment && !card.historical && !!card.result && !hasUsableBacktest(card.result)) ||
     advice?.backtestStatus === 'unavailable'
   const canChoose = props.canSelect && status === 'enabled' && !unavailable
-  const label = status === 'disabled' || !card.definition ? '已下架' : status === 'experimental' ? '试验中' :
+  const label = status === 'disabled' ? '已下架' : status === 'experimental' ? '试验中' :
     unavailable ? '当前不可用' : card.historical ? '历史回测' : card.result ? '已回测' : '待回测'
   return { ...card, item, advice, label, canChoose }
 }))
@@ -32,6 +34,42 @@ const scores = computed(() => compareValidationScores(props.experiment?.algorith
 const leaders = computed(() => scores.value.filter(row => row.score === scores.value[0]?.score))
 const byKey = computed(() => new Map(scores.value.map(row => [row.key, row])))
 const percent = (value?: number) => value == null ? '—' : `${fmt(value * 100, 1)}%`
+const routes: Record<string, string[]> = {
+  baseline: ['当前读数', '保持当前值', '预测值'],
+  lstm: ['历史序列', 'LSTM 时序网络', '预测值'],
+  ridge: ['工况特征', '岭回归', '预测值'],
+  boosting: ['工况特征', '逐轮拟合残差', '预测值'],
+  physics: ['工艺参数', '机理求解', '预测值'],
+  fusion: ['机理预测', '残差修正', '融合值'],
+}
+const representativePoints = computed(() => {
+  const cycles = new Map<string, ExperimentPoint[]>()
+  const models = props.experiment?.algorithms.filter(item => item.available) ?? []
+  for (const point of props.experiment?.points ?? []) {
+    if (point.split !== 'test') continue
+    const cycle = cycles.get(point.cycle)
+    if (cycle) cycle.push(point)
+    else cycles.set(point.cycle, [point])
+  }
+  const length = 36
+  let best = 0
+  let selection: ExperimentPoint[] = []
+  // 所有卡片使用同一窑次片段。按有效预测点数量选片段，不按误差挑选。
+  for (const points of cycles.values()) {
+    points.sort((left, right) => left.ts.localeCompare(right.ts))
+    const weights = points.map(point => Number.isFinite(point.actual) && point.actual !== -9999
+      ? models.filter(item => algorithmPrediction(point, item.key) !== null).length : 0)
+    let count = 0
+    for (const [index, weight] of weights.entries()) {
+      count += weight - (weights[index - length] ?? 0)
+      if (count <= best) continue
+      best = count
+      const start = Math.max(0, index - length + 1)
+      selection = points.slice(start, start + length)
+    }
+  }
+  return selection
+})
 </script>
 
 <template>
@@ -46,25 +84,28 @@ const percent = (value?: number) => value == null ? '—' : `${fmt(value * 100, 
         <div class="card-heading">
           <h3>{{ item.name }}</h3><span class="badge">{{ label }}</span>
         </div>
+        <div @click.stop>
+          <KilnMiniSparkline :points="representativePoints" :algorithm="item.key" :unit="experiment?.unit" />
+        </div>
         <div class="highlights">
           <span v-if="item.category" class="badge">{{ item.category }}</span>
           <span v-if="item.tuning" class="badge">{{ algorithmTuningLabel(item.tuning) }}</span>
           <span v-if="item.sampleSizeRisk === 'high'" class="badge risk">小样本过拟合风险</span>
         </div>
         <p>{{ item.oneLine ?? item.explanation }}</p>
-        <dl class="card-details">
+        <details @click.stop><summary>适用场景与局限</summary><dl class="card-details">
           <div v-if="item.strengths?.length"><dt>优点</dt><dd>{{ item.strengths.join('；') }}</dd></div>
           <div v-if="item.benefits?.length"><dt>使用好处</dt><dd>{{ item.benefits.join('；') }}</dd></div>
           <div v-if="item.fitScenarios?.length"><dt>适用场景</dt><dd>{{ item.fitScenarios.join('；') }}</dd></div>
         </dl>
-        <p v-if="item.limitations?.length" class="warning">{{ item.limitations.join('；') }}</p>
+        <p v-if="item.limitations?.length" class="warning">{{ item.limitations.join('；') }}</p></details>
         <p v-if="result?.note" class="warning">{{ result.note }}</p>
         <p v-else-if="result && !hasUsableBacktest(result)" class="warning">本次实验没有可选用的有效测试结果。</p>
-        <p v-if="cardAdvice" class="muted">{{ cardAdvice.whyNow }}</p>
-        <p v-else-if="label === '待回测'" class="muted">尚未回测，非精度承诺。</p>
+        <p v-if="label === '待回测'" class="muted">暂无回测成绩。</p>
         <details v-if="result?.[split]" @click.stop>
           <summary>{{ split === 'validation' ? '验证集' : '测试集' }}指标</summary>
           <div class="metrics">
+            <span title="同一时刻同时有实测和预测，才能算入误差">有效样本 <strong>{{ result[split]?.count }} 个</strong></span>
             <span title="每次预测与实测相差的数值取绝对值后求平均">平均相差 <strong>{{ formatKilnReading(result[split]?.mae, experiment?.unit) }}</strong></span>
             <span title="反映整体偏差，对个别大偏差更敏感，越小越好">{{ experiment?.config.task === 'temperature' ? '综合温差' : '综合偏差' }} <strong>{{ formatKilnReading(result[split]?.rmse, experiment?.unit) }}</strong></span>
             <span v-if="result[split]?.mape != null" title="每个预测点的偏差占实测值的比例，再取平均">平均偏差比例 <strong>{{ fmt(result[split]?.mape) }}%</strong></span>
@@ -83,12 +124,18 @@ const percent = (value?: number) => value == null ? '—' : `${fmt(value * 100, 
             {{ selected === item.key ? '已选用' : pending === item.key ? '已待选' : result && !historical ? '选用算法' : '选择此算法' }}
           </button>
           <details @click.stop><summary>数据要求与算法原理</summary>
+            <div class="method" aria-label="模型计算路径"><Workflow :size="15" />
+              <template v-for="(node,i) in routes[item.baseKey ?? item.key] ?? ['输入特征','模型推理','预测值']" :key="i">
+                <ArrowRight v-if="i" :size="12" /><span>{{ node }}</span>
+              </template>
+            </div>
             <p v-if="item.dataRequirements?.length">{{ item.dataRequirements.join('；') }}</p>
             <p class="formula">{{ item.formula }}</p><p>{{ item.explanation }}</p><p class="muted">{{ item.mechanismRole }}</p>
           </details>
         </div>
         <details v-if="cardAdvice?.evidenceRefs.length" @click.stop>
           <summary>查看依据</summary>
+          <p>{{ cardAdvice.whyNow }}</p>
           <article v-for="ref in cardAdvice.evidenceRefs" :key="ref.id" class="evidence">
             <strong>{{ ref.label }}</strong><small v-if="ref.location"> · {{ ref.location }}</small>
             <p>{{ ref.detail }}</p>
@@ -150,7 +197,10 @@ meter::-webkit-meter-optimum-value { background:#4a9988; }
 .badge { font-size:10px; background:var(--muted); border:1px solid var(--border); border-radius:4px; padding:2px 6px; color:var(--muted-foreground); }
 .badge.good { background:#40968720; color:var(--foreground); }
 .badge.risk { background:#c495541c; color:var(--foreground); }
-.algorithm-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.algorithm-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr)); }
+.method { display:flex; align-items:center; gap:5px; margin:12px 0 8px; padding:10px 7px; border-radius:6px; color:#a8dfe7; background:linear-gradient(110deg,#17354b,#112939); }
+.method span { font-size:10px; color:#e0f6fa; }.method svg { flex-shrink:0; }
+.algorithm-grid :deep(.sparkline) { margin:8px 0; }
 .algorithm-grid>article { min-width:0; border-bottom:1px solid var(--border); border-right:1px solid var(--border); padding:14px 17px; }
 .algorithm-grid>article:nth-child(2n) { border-right:0; }
 .selectable { cursor:pointer; }

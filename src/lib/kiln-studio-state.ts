@@ -73,7 +73,7 @@ export function temperatureCandidates(algorithms: Algorithm[], validationCount: 
 
 export function algorithmPrediction(point: ExperimentPoint, key: AlgorithmKey): number | null {
   const value = point[key]
-  return typeof value === 'number' ? value : null
+  return typeof value === 'number' && Number.isFinite(value) && value !== -9999 ? value : null
 }
 
 export function compareValidationScores(algorithms: Algorithm[], validationCount: number) {

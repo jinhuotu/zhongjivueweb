@@ -7,6 +7,7 @@ import {
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,
+  MarkPointComponent,
   MarkAreaComponent,
 } from 'echarts/components'
 
@@ -26,6 +27,7 @@ export function ensureEcharts() {
     TooltipComponent,
     LegendComponent,
     MarkLineComponent,
+    MarkPointComponent,
     MarkAreaComponent,
   ])
   registered = true

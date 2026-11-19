@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { BarChart3, LineChart, Loader2, Sparkles } from 'lucide-vue-next'
 import KilnModelEvidence from './KilnModelEvidence.vue'
+import KilnOverviewDashboard from './KilnOverviewDashboard.vue'
 import KilnPredictionReplay from './KilnPredictionReplay.vue'
 import KilnPredictionQuality from './KilnPredictionQuality.vue'
 import KilnTemperatureZoneReview from './KilnTemperatureZoneReview.vue'
@@ -19,8 +20,18 @@ const layout = ref<DashboardLayout>({
   task: tasks.value.includes('temperature') ? 'temperature' : tasks.value[0]!, chart: 'line',
   windowMinutes: 30,
 })
-const view = ref<'replay' | 'scenario'>(layout.value.task === 'temperature' ? 'scenario' : 'replay')
-const scenarioOpened = ref(view.value === 'scenario')
+// 顶层视图：总览（默认，一屏多图）/ 滚动回放 / 温度方案对比
+const view = ref<'overview' | 'replay' | 'scenario'>('overview')
+const scenarioOpened = ref(false)
+// 总览聚焦的任务：优先燃气（便于用气/分阶段），否则温度，再退到 manifest 第一个
+const overviewTask = computed<Task>(() =>
+  tasks.value.includes('energy') ? 'energy'
+    : tasks.value.includes('temperature') ? 'temperature'
+      : tasks.value[0]!)
+// 总览模式下当前任务绑定的模型、实验与回放包
+const overviewModel = computed(() => props.bundle.manifest.find(item => item.task === overviewTask.value))
+const overviewExperiment = computed(() => props.state.experiments.find(item => item.id === overviewModel.value?.experimentId))
+const overviewReplay = computed(() => replays.value[overviewTask.value])
 const refit = ref<InstanceType<typeof KilnTemperatureRefit>>()
 const trainingDetails = ref<HTMLDetailsElement>()
 const trainingPanel = ref<HTMLElement>()
@@ -64,6 +75,33 @@ function selectTask(task: Task) {
 function selectView(next: typeof view.value) {
   view.value = next
   if (next === 'scenario') scenarioOpened.value = true
+}
+
+// 进入总览时把工作任务同步为总览任务，保证 generate 的模型校验通过
+watch(view, next => {
+  if (next === 'overview') layout.value.task = overviewTask.value
+}, { immediate: true })
+
+// 总览请求回放：用总览任务绑定的算法、数据集第一个窑次、固定 5 分钟步长 / 30 分钟窗口
+async function requestOverviewReplay() {
+  layout.value.task = overviewTask.value
+  await nextTick()
+  const targetModel = overviewModel.value
+  const targetExperiment = overviewExperiment.value
+  const targetDataset = dataset.value
+  if (!targetModel || !targetExperiment || !targetDataset) return
+  // 取训练结束后的第一个窑次，避免选到训练区间
+  const cutoff = targetExperiment.split.find(item => item.name === '训练')?.to
+  const firstCycle = targetDataset.summary.find(item => !cutoff || item.to > cutoff)
+  if (!firstCycle) return
+  await generate({
+    experimentId: targetExperiment.id,
+    cycleId: firstCycle.fileId,
+    frameStepMinutes: 5,
+    horizonMinutes: 30,
+    selectedAlgorithms: [targetModel.algorithm],
+    includeMechanism: true,
+  })
 }
 
 async function trainThirtyMinuteModel(zone?: number) {
@@ -149,22 +187,29 @@ async function generate(body: ReplayRequest) {
     </header>
     <p v-if="layoutError" class="error" role="alert">{{ layoutError }}</p>
     <div class="dashboard-controls">
-      <div class="segmented" role="group" aria-label="预测指标">
-        <button v-for="task in tasks" :key="task" type="button" :aria-pressed="layout.task === task" @click="selectTask(task)">{{ labels[task] }}</button>
+      <div class="segmented" role="group" aria-label="看板视图">
+        <button type="button" :aria-pressed="view === 'overview'" @click="selectView('overview')">总览</button>
+        <button type="button" :aria-pressed="view !== 'overview'"
+          @click="selectView(layout.task === 'temperature' ? 'scenario' : 'replay')">详细分析</button>
       </div>
-      <div v-if="layout.task === 'temperature'" class="segmented" role="group" aria-label="温度分析方式">
-        <button type="button" :aria-pressed="view === 'scenario'" @click="selectView('scenario')">温度方案对比</button>
-        <button type="button" :aria-pressed="view === 'replay'" @click="selectView('replay')">滚动回放</button>
-      </div>
-      <div v-if="view === 'replay'" class="segmented chart-modes" role="group" aria-label="图表类型">
-        <button type="button" :aria-pressed="layout.chart === 'line'" @click="layout.chart = 'line'"><LineChart :size="15" />折线</button>
-        <button type="button" :aria-pressed="layout.chart === 'bar'" @click="layout.chart = 'bar'"><BarChart3 :size="15" />柱状</button>
-      </div>
-      <label v-if="view === 'replay'" class="window">未来
-        <select v-model.number="layout.windowMinutes" aria-label="滚动预测窗口"><option :value="5">5 分钟</option><option :value="10">10 分钟</option><option :value="30">30 分钟</option></select>
-      </label>
+      <template v-if="view !== 'overview'">
+        <div class="segmented" role="group" aria-label="预测指标">
+          <button v-for="task in tasks" :key="task" type="button" :aria-pressed="layout.task === task" @click="selectTask(task)">{{ labels[task] }}</button>
+        </div>
+        <div v-if="layout.task === 'temperature'" class="segmented" role="group" aria-label="温度分析方式">
+          <button type="button" :aria-pressed="view === 'scenario'" @click="selectView('scenario')">温度方案对比</button>
+          <button type="button" :aria-pressed="view === 'replay'" @click="selectView('replay')">滚动回放</button>
+        </div>
+        <div v-if="view === 'replay'" class="segmented chart-modes" role="group" aria-label="图表类型">
+          <button type="button" :aria-pressed="layout.chart === 'line'" @click="layout.chart = 'line'"><LineChart :size="15" />折线</button>
+          <button type="button" :aria-pressed="layout.chart === 'bar'" @click="layout.chart = 'bar'"><BarChart3 :size="15" />柱状</button>
+        </div>
+        <label v-if="view === 'replay'" class="window">未来
+          <select v-model.number="layout.windowMinutes" aria-label="滚动预测窗口"><option :value="5">5 分钟</option><option :value="10">10 分钟</option><option :value="30">30 分钟</option></select>
+        </label>
+      </template>
     </div>
-    <div v-if="layout.task === 'temperature' && experiment" class="minute-status">
+    <div v-if="view !== 'overview' && layout.task === 'temperature' && experiment" class="minute-status">
       <p v-if="hasThirtyMinuteForecast"><strong>支持未来 30 分钟逐分钟预测</strong> · 每次从同一起点计算 +1 至 +30 分钟温度。</p>
       <template v-else>
         <p><strong>生成未来 30 分钟逐分钟预测</strong> · 在当前数据版本上训练 LSTM，每分钟输出一个温度预测。</p>
@@ -174,6 +219,9 @@ async function generate(body: ReplayRequest) {
       </template>
     </div>
   </section>
+  <KilnOverviewDashboard v-if="view === 'overview'" :bundle="bundle" :replay="overviewReplay"
+    :busy="replaying" :experiment="overviewExperiment" :algorithm-key="overviewModel?.algorithm ?? ''"
+    @request-replay="requestOverviewReplay" @configure="trainThirtyMinuteModel()" />
   <div v-if="view === 'replay'" class="dashboard-body">
     <p v-if="!experiment || !dataset" class="surface feedback">当前版本缺少绑定的实验或数据版本，无法生成历史回放。</p>
     <template v-else>
@@ -194,12 +242,13 @@ async function generate(body: ReplayRequest) {
   <KilnTemperatureWorkbench v-if="scenarioOpened" v-show="view === 'scenario' && layout.task === 'temperature'"
     :bundle="bundle" :dataset="dataset" :runs="state.temperatureRuns ?? []" :default-window="layout.windowMinutes"
     :thermal-enabled="thermalEnabled"
+    @configure="trainThirtyMinuteModel()"
   />
-  <details v-if="model && dataset" class="dashboard-detail">
+  <details v-if="view !== 'overview' && model && dataset" class="dashboard-detail">
     <summary>算法选型与建模依据</summary>
     <KilnModelEvidence :model="model" :dataset="dataset" :experiment="experiment" :mechanism="mechanism" />
   </details>
-  <details v-if="layout.task !== 'afr' && experiment && model" ref="trainingDetails" :key="experiment.id" class="dashboard-detail" :open="layout.task === 'energy'">
+  <details v-if="view !== 'overview' && layout.task !== 'afr' && experiment && model" ref="trainingDetails" :key="experiment.id" class="dashboard-detail" :open="layout.task === 'energy'">
     <summary>{{ layout.task === 'temperature' ? '温区预测核验、实测对比与模型训练' : '历史预测核验与模型训练' }}</summary>
     <div class="dashboard-body">
       <KilnTemperatureZoneReview v-if="layout.task === 'temperature' && dataset"

@@ -30,7 +30,8 @@ const chosenKeys = ['baseline', 'ridge', 'physics', 'fusion', 'lstm']
 const available = computed(() => props.library.filter(item => chosenKeys.includes(item.key) && item.status === 'enabled'))
 const canRun = computed(() => Number.isInteger(historyMinutes.value) && historyMinutes.value >= 5 &&
   historyMinutes.value <= 240 && available.value.length > 0)
-const canTrainTrajectory = computed(() => canRun.value && available.value.some(item => item.key === 'lstm'))
+const trajectoryAlgorithms = computed(() => available.value.filter(item => ['ridge', 'fusion', 'lstm'].includes(item.key)))
+const canTrainTrajectory = computed(() => canRun.value && trajectoryAlgorithms.value.length > 0)
 const candidates = computed(() => {
   const count = trained.value?.split.find(item => item.name === '验证')?.count ?? 0
   const usable = temperatureCandidates(trained.value?.algorithms ?? [], count)
@@ -55,7 +56,7 @@ async function train(mode: TrainMode = pendingMode.value ?? 'comparison', zone =
       ...props.experiment.config, datasetId: props.bundle.datasetId, mechanismId: source.value.mechanismId, zone,
       horizonMinutes: mode === 'trajectory' ? 30 : horizon.value, historyMinutes: historyMinutes.value,
       calibrate: true, lockedParameters: locked,
-      selectedAlgorithmKeys: mode === 'trajectory' ? ['lstm'] : available.value.map(item => item.key),
+      selectedAlgorithmKeys: mode === 'trajectory' ? trajectoryAlgorithms.value.map(item => item.key) : available.value.map(item => item.key),
       excludeZeroTemperatureRecords: excludeZero.value,
     }
     const jobToResume = pendingJob.value
@@ -162,7 +163,7 @@ async function trainTrajectoryAndApply(zone = pendingZone.value ?? props.experim
     return
   }
   if (!canTrainTrajectory.value) {
-    error.value = '请启用算法库中的 LSTM，并将历史窗口设为 5 到 240 分钟的整数。'
+    error.value = '请启用岭回归、机理与残差融合或 LSTM，并将历史窗口设为 5 到 240 分钟的整数。'
     return
   }
   await train('trajectory', zone)

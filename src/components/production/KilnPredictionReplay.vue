@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { use } from 'echarts/core'
 import { MarkPointComponent } from 'echarts/components'
 import type { EChartsOption, LineSeriesOption } from 'echarts'
@@ -39,7 +39,6 @@ const minuteAlgorithms = computed(() => algorithms.value.filter(item =>
   item.key === 'baseline' || hasMinuteForecast(item, props.experiment.config.horizonMinutes) ||
   props.experiment.config.horizonMinutes === 1,
 ))
-const fixedAlgorithms = computed(() => algorithms.value.filter(item => !minuteAlgorithms.value.includes(item)))
 const cycleId = ref(props.replay?.request.cycleId ?? cycles.value[0]?.fileId ?? '')
 const excludedRange = ref<ReplayExcludedRange | null>(props.replay?.request.excludedRange ?? null)
 const excludeStart = ref(excludedRange.value?.start ?? '')
@@ -59,26 +58,35 @@ const selected = ref<AlgorithmKey>((props.dashboardLayout && props.preferredAlgo
   ?? algorithms.value.find(item => item.key === props.preferredAlgorithm)?.key
   ?? (isTemperature.value ? minuteAlgorithms.value.find(item => item.key === 'lstm')?.key : undefined)
   ?? algorithms.value[0]?.key ?? availableAlgorithms.value[0]?.key ?? ''))
-const horizon = ref<ReplayHorizon>(props.experiment.config.task === 'temperature' &&
-  props.experiment.config.horizonMinutes !== 30 ? 10 : 30)
+const selectedAlgorithms = ref<AlgorithmKey[]>(props.replay?.request.selectedAlgorithms ??
+  [...new Set([selected.value, availableAlgorithms.value.find(item => item.key === 'physics')?.key,
+    ...availableAlgorithms.value.map(item => item.key)])].filter((key): key is AlgorithmKey => !!key).slice(0, 3))
+const requestedAlgorithms = computed(() => props.dashboardLayout
+  ? [selected.value].filter(Boolean)
+  : availableAlgorithms.value.filter(item => selectedAlgorithms.value.includes(item.key)).map(item => item.key))
+const horizon = ref<ReplayHorizon>(30)
 const windowMinutes = computed(() => props.dashboardLayout?.windowMinutes ?? horizon.value)
-const horizons = [5, 10, 30] as const
+const horizons = [5, 30, 60] as const
+const requestedHorizon = computed(() => props.dashboardLayout ? 30 : horizon.value)
+const timelineId = useId()
 const frameStep = ref(props.replay?.request.frameStepMinutes ?? 5)
 const frameSteps = [1, 5, 10, 15, 30] as const
 const speeds = [0.5, 1, 2, 4] as const
 const speed = ref<number>(1)
 const frameIndex = ref(firstPlayableFrame(props.replay))
 const playing = ref(false)
-const showPlan = ref(false)
+const showPlan = ref(!props.dashboardLayout)
 const current = computed(() => props.replay?.frames[frameIndex.value])
 const snapshot = computed(() => current.value?.snapshot)
 const previousSnapshot = computed(() => props.replay?.frames[frameIndex.value - 1]?.snapshot)
 const needsReplay = computed(() => {
   const request = props.replay?.request
-  return !request || request.cycleId !== cycleId.value || request.frameStepMinutes !== frameStep.value ||
-    !request.includeMechanism || request.horizonMinutes < 30 || !request.selectedAlgorithms.includes(selected.value) ||
-    (isTemperature.value && selected.value === 'baseline' &&
-      props.replay?.algorithms.find(item => item.key === selected.value)?.temperatureTrajectory !== 'persistence') ||
+  return !request || !requestedAlgorithms.value.length || request.cycleId !== cycleId.value ||
+    request.frameStepMinutes !== frameStep.value || request.horizonMinutes < requestedHorizon.value ||
+    (props.dashboardLayout && !request.includeMechanism) ||
+    requestedAlgorithms.value.some(key => !request.selectedAlgorithms.includes(key) ||
+      (isTemperature.value && key === 'baseline' &&
+        props.replay?.algorithms.find(item => item.key === key)?.temperatureTrajectory !== 'persistence')) ||
     rangeKey(request.excludedRange) !== rangeKey(excludedRange.value)
 })
 const frameCount = computed(() => props.replay?.frames.length ?? 0)
@@ -106,6 +114,19 @@ const forecastSlots = computed(() => selected.value === 'physics' ? [] : current
 const shownForecast = computed(() => forecastSlots.value.filter(item => item.value != null))
 const mechanismForecast = computed(() => current.value?.mechanismFuture?.filter(item => item.minuteOffset <= windowMinutes.value) ?? [])
 const actualForecast = computed(() => current.value?.actualFuture.filter(item => item.minuteOffset <= windowMinutes.value + 1e-6) ?? [])
+const forecastColors = ['#2379d2', '#248774', '#ac5a96', '#ba602f', '#755ab4', '#477b2d', '#177d95']
+const forecastSeries = computed(() => availableAlgorithms.value.flatMap((item, index) => {
+  if (!requestedAlgorithms.value.includes(item.key)) return []
+  const model = props.replay?.algorithms.find(algorithm => algorithm.key === item.key)
+  const slots = current.value?.future[item.key]?.filter(point => point.minuteOffset <= windowMinutes.value) ?? []
+  return [{
+    key: item.key, name: item.name, color: forecastColors[index % forecastColors.length],
+    slots, count: slots.filter(point => point.value !== null).length,
+    fixed: model?.temperatureTrajectory === 'fixedHorizon' || (!isTemperature.value &&
+      props.experiment.config.horizonMinutes > 1 && !hasMinuteForecast(item, props.experiment.config.horizonMinutes)),
+    nativeMinutes: model?.trainedHorizonMinutes ?? props.experiment.config.horizonMinutes,
+  }]
+}))
 const deviations = computed(() => replayDeviations(
   actualForecast.value, isTemperature.value ? forecastSlots.value : shownForecast.value,
   mechanismForecast.value.filter(item => item.value !== null),
@@ -186,16 +207,31 @@ let lastTick = 0
 const msPerFrame = 420
 function firstPlayableFrame(replay: ReplayPackage | undefined) {
   if (!replay) return 0
-  if (isTemperature.value) {
+  const keys = requestedAlgorithms.value
+  if (!props.dashboardLayout) {
+    let bestFrame = 0
+    let bestCount = 0
+    for (const [index, frame] of replay.frames.entries()) {
+      const count = keys.filter(key => frame.future[key]?.some(point =>
+        point.minuteOffset <= windowMinutes.value && point.value != null)).length
+      if (count > bestCount || (count === bestCount && frame.originMinute >= 20 && replay.frames[bestFrame].originMinute < 20)) {
+        bestFrame = index
+        bestCount = count
+      }
+      if (count === keys.length && frame.originMinute >= 20) break
+    }
+    return bestFrame
+  }
+  if (isTemperature.value && props.dashboardLayout) {
     const complete = replay.frames.findIndex(frame => frame.originMinute >= 20 &&
       frame.future[selected.value]?.filter(point =>
         point.minuteOffset <= windowMinutes.value && point.value != null,
       ).length === windowMinutes.value)
     if (complete >= 0) return complete
   }
-  const hasPrediction = (frame: ReplayFrame) => frame.future[selected.value]?.some(point =>
+  const hasPrediction = (frame: ReplayFrame) => keys.some(key => frame.future[key]?.some(point =>
     point.minuteOffset <= windowMinutes.value && point.value != null,
-  )
+  ))
   const withHistory = replay.frames.findIndex(frame => frame.originMinute >= 20 && hasPrediction(frame))
   return withHistory >= 0 ? withHistory : Math.max(0, replay.frames.findIndex(hasPrediction))
 }
@@ -226,14 +262,15 @@ function seek(event: Event) {
   frameIndex.value = Number((event.target as HTMLInputElement).value)
 }
 let lastRequest = ''
-const requestKey = computed(() => JSON.stringify([cycleId.value, selected.value, frameStep.value, rangeKey(excludedRange.value)]))
+const requestKey = computed(() => JSON.stringify([cycleId.value, requestedAlgorithms.value, requestedHorizon.value, frameStep.value, rangeKey(excludedRange.value)]))
 function generate() {
-  if (!cycleId.value || !selected.value || props.busy) return
+  if (!cycleId.value || !requestedAlgorithms.value.length || props.busy) return
   pause()
   lastRequest = requestKey.value
   emit('generate', {
     experimentId: props.experiment.id, cycleId: cycleId.value, frameStepMinutes: frameStep.value,
-    horizonMinutes: 30, selectedAlgorithms: [selected.value], includeMechanism: true,
+    horizonMinutes: requestedHorizon.value, selectedAlgorithms: requestedAlgorithms.value,
+    includeMechanism: !!props.dashboardLayout,
     ...(excludedRange.value ? { excludedRange: excludedRange.value } : {}),
   })
 }
@@ -367,18 +404,41 @@ const option = computed<EChartsOption>(() => {
     silent: true, symbol: 'circle', symbolSize: 14, label: { show: false }, itemStyle: { color: '#358de2' },
     data: actual == null ? [] : [{ name: '起点实测', coord: [origin, actual] }],
   }
-  if (task.value === 'temperature' && showPlan.value) {
+  const secondAxis = !props.dashboardLayout && task.value !== 'temperature' && showPlan.value
+  if (showPlan.value) {
     const plan = base.value.slice(Math.max(0, indexAt(first) - 1), indexAt(last + 1e-7))
-    line('plan', '设定温度', plotGaps(plan.map(point => [point.minute, point.setpoint])), '#bc873a', true)
+    const planLine = line('plan', '设定温度', plotGaps(plan.map(point => [point.minute, point.setpoint])), '#bc873a', true)
+    planLine.yAxisIndex = secondAxis ? 1 : 0
+    planLine.tooltip = { valueFormatter: value => formatKilnChartValue(value, '℃') }
   }
   const futureActual: PlotPoint[] = actualForecast.value.map(item => [origin + item.minuteOffset, item.value])
   line('future-actual', target + '事后实测', plotGaps([[origin, actual ?? null], ...futureActual]), '#8996a8', true)
-  if (shownForecast.value.length) {
+  if (!props.dashboardLayout) {
+    forecastSeries.value.forEach(item => {
+      if (!item.count) return
+      const points: PlotPoint[] = item.slots.map(point => [origin + point.minuteOffset, point.value])
+      // 所有预测线都从预测起点（当前实测）出发，保证视觉连贯
+      points.unshift([origin, actual])
+      const prediction = line('prediction-' + item.key, item.name, points, item.color, item.key !== 'physics')
+      prediction.showSymbol = true
+      prediction.symbol = 'circle'
+      // 固定步长（稀疏）预测同样用线连接节点，节点点保留以标出真实预测位置，不插值不编造
+      prediction.symbolSize = item.fixed ? 6 : 4
+    })
+    if (requestedAlgorithms.value.includes('fusion') && forecastSeries.value.some(item => item.key === 'fusion' && item.fixed)) {
+      const reference = frame.fusionReference?.filter(point => point.minuteOffset <= windowMinutes.value) ?? []
+      if (reference.some(point => point.value !== null)) {
+        const points: PlotPoint[] = reference.map(point => [origin + point.minuteOffset, point.value])
+        const referenceLine = line('fusion-reference', '融合的机理参考', [[origin, actual], ...points], '#938184')
+        referenceLine.lineStyle = { color: '#938184', type: 'dotted', width: 1.5 }
+      }
+    }
+  } else if (shownForecast.value.length) {
     const values = isTemperature.value ? forecastSlots.value : shownForecast.value
     const points: PlotPoint[] = values.map(item => [origin + item.minuteOffset, item.value])
     const prediction = line('prediction', trajectoryLabel.value, points, '#2379d2', true)
     if (isTemperature.value && trajectoryMethod.value === 'fixedHorizon') prediction.lineStyle = { opacity: 0 }
-    prediction.showSymbol = true
+    prediction.showSymbol = trajectoryMethod.value === 'fixedHorizon'
     prediction.symbol = 'circle'
     prediction.symbolSize = 7
   }
@@ -392,18 +452,21 @@ const option = computed<EChartsOption>(() => {
   }
   return {
     animation: false,
-    grid: { left: 63, right: 26, top: 65, bottom: 52 },
+    grid: { left: 63, right: secondAxis ? 63 : 26, top: 65, bottom: 52 },
     tooltip: {
       ...tooltipBase(p), trigger: 'axis', renderMode: 'richText', confine: true,
       axisPointer: { label: { formatter: info => elapsed(Number(info.value)) } },
       valueFormatter: item => formatKilnChartValue(item, unit.value),
     },
-    legend: { top: 8, textStyle: { color: p.legend, fontSize: 12 } },
+    legend: { type: 'scroll', top: 8, textStyle: { color: p.legend, fontSize: 12 } },
     xAxis: {
       type: 'value', min: first, max: last, name: '烧成经过时间', nameLocation: 'middle', nameGap: 31,
       axisLabel: { formatter: elapsed, color: p.axis }, nameTextStyle: { color: p.axis }, splitLine: { show: false },
     },
-    yAxis: { type: 'value', name: unit.value, scale: true, axisLabel: { color: p.axis, formatter: value => formatKilnNumber(value, kilnReadingDigits(unit.value)) }, splitLine: { lineStyle: { color: p.grid, type: 'dashed' } } },
+    yAxis: [
+      { type: 'value', name: unit.value, scale: true, axisLabel: { color: p.axis, formatter: value => formatKilnNumber(value, kilnReadingDigits(unit.value)) }, splitLine: { lineStyle: { color: p.grid, type: 'dashed' } } },
+      ...(secondAxis ? [{ type: 'value' as const, name: '设定 ℃', scale: true, axisLabel: { color: p.axis }, splitLine: { show: false } }] : []),
+    ],
     series,
   }
 })
@@ -416,26 +479,19 @@ const option = computed<EChartsOption>(() => {
       <p>{{ task === 'temperature' ? temperatureTarget : replay?.targetLabel ?? subject }} · {{ experiment.sourceKind === 'synthetic' ? '合成演示' : '历史记录' }}</p>
     </header>
     <div class="replay-config">
-      <label v-if="!dashboardLayout">算法预测
-        <select v-model="selected" :disabled="busy">
-          <option v-if="!algorithms.length" :value="selected">当前实验没有数据算法</option>
-          <template v-if="isTemperature">
-            <optgroup v-if="minuteAlgorithms.length" label="逐分钟预测">
-              <option v-for="item in minuteAlgorithms" :key="item.key" :value="item.key">{{ item.name }}</option>
-            </optgroup>
-            <optgroup v-if="fixedAlgorithms.length" label="固定时距预测">
-              <option v-for="item in fixedAlgorithms" :key="item.key" :value="item.key">{{ item.name }}</option>
-            </optgroup>
-          </template>
-          <option v-else v-for="item in algorithms" :key="item.key" :value="item.key">{{ item.name }}</option>
-        </select>
-      </label>
       <label>窑次
         <select v-model="cycleId" :disabled="busy">
           <option v-if="!cycles.length" value="">没有可回放的历史记录</option>
           <option v-for="cycle in cycles" :key="cycle.fileId" :value="cycle.fileId">{{ cycle.file }}</option>
         </select>
       </label>
+      <fieldset v-if="!dashboardLayout" class="model-options" :disabled="busy">
+        <legend>对比算法</legend>
+        <label v-for="item in availableAlgorithms" :key="item.key">
+          <input v-model="selectedAlgorithms" type="checkbox" :value="item.key" />
+          {{ item.name }}
+        </label>
+      </fieldset>
       <label v-if="!dashboardLayout">预测窗口
         <select v-model.number="horizon">
           <option v-for="value in horizons" :key="value" :value="value">{{ value }} 分钟</option>
@@ -461,18 +517,28 @@ const option = computed<EChartsOption>(() => {
             <Pause v-if="playing" :size="15" /><Play v-else :size="15" />{{ playing ? '暂停' : '播放' }}
           </button>
           <label>倍速 <select v-model.number="speed"><option v-for="value in speeds" :key="value" :value="value">{{ value }}×</option></select></label>
-          <label v-if="task === 'temperature'"><input v-model="showPlan" type="checkbox" /> 显示设定温度</label>
+          <label v-if="!dashboardLayout || task === 'temperature'"><input v-model="showPlan" type="checkbox" /> 显示设定温度</label>
         </div>
         <template v-if="dashboardLayout?.chart === 'bar'">
           <p v-if="task === 'energy'" class="availability">未来 {{ windowMinutes }} 分钟累计用气 · 柱形仅展示覆盖完整窗口的结果</p>
           <p v-else class="availability">{{ lastAligned ? `提前 ${formatKilnNumber(lastAligned.minute)} 分钟 · 同一时点对比` : '当前窗口没有可对齐的数值' }}</p>
           <VChart :option="barOption" autoresize class="forecast-chart" />
         </template>
-        <VChart v-else :option="option" :update-options="{ replaceMerge: ['series'] }" autoresize class="forecast-chart" />
+        <VChart v-else :option="option" :update-options="{ replaceMerge: ['series', 'yAxis'] }" autoresize class="forecast-chart" />
         <div class="timeline">
-          <label for="replay-frame">回放位置 · {{ current.originTs.replace('T', ' ').slice(0, 19) }}</label>
-          <input id="replay-frame" type="range" min="0" :max="frameCount - 1" :value="frameIndex" @input="seek" />
+          <label :for="timelineId">回放位置 · {{ current.originTs.replace('T', ' ').slice(0, 19) }}</label>
+          <input :id="timelineId" type="range" min="0" :max="frameCount - 1" :value="frameIndex" @input="seek" />
         </div>
+        <ul v-if="!dashboardLayout" class="model-status" aria-label="当前预测点">
+          <li v-for="item in forecastSeries" :key="item.key">
+            <span class="model-dot" :style="{ backgroundColor: item.color }" aria-hidden="true"></span>
+            <strong>{{ item.name }}</strong>
+            <span v-if="item.count">{{ item.count }} 个预测点<template v-if="item.fixed"> · 每 {{ item.nativeMinutes }} 分钟一个点</template></span>
+            <span v-else-if="item.fixed && item.nativeMinutes > windowMinutes">需至少 {{ item.nativeMinutes }} 分钟窗口</span>
+            <span v-else>当前起点暂无预测</span>
+          </li>
+        </ul>
+        <template v-else>
         <div class="comparison-summary" v-if="lastAligned">
           <p>提前 {{ formatKilnNumber(lastAligned.minute) }} 分钟 · 最近可核对的预测点</p>
           <dl class="comparison-values">
@@ -529,6 +595,7 @@ const option = computed<EChartsOption>(() => {
           </table></div>
           <p>按流量点间梯形积分，起点用当时的实测流量。累计偏差需要两条曲线覆盖完整窗口。算法累计使用时距为 5 分钟或更短的模型。</p>
         </section>
+        </template>
       </div>
       <aside v-if="snapshot" class="readings">
         <h3>这个时刻的实测读数</h3>
@@ -536,7 +603,7 @@ const option = computed<EChartsOption>(() => {
         <dl class="reading-grid">
           <div v-for="[key, label, unit] in signals" :key="key">
             <dt>{{ label }}</dt>
-            <dd>{{ reading(snapshot[key], unit) }} <small>{{ delta(snapshot[key], previousSnapshot?.[key], unit) }}</small></dd>
+            <dd>{{ snapshot[key] == null ? '--' : reading(snapshot[key], unit) }} <small>{{ delta(snapshot[key], previousSnapshot?.[key], unit) }}</small></dd>
           </div>
         </dl>
         <div class="zone-list">
@@ -545,7 +612,7 @@ const option = computed<EChartsOption>(() => {
             <dl>
               <div v-for="[key, label, unit] in zoneSignals" :key="key">
                 <dt>{{ label }}</dt>
-                <dd>{{ reading(zone[key], unit) }} <small>{{ delta(zone[key], previousSnapshot?.zones[zone.zone - 1]?.[key], unit) }}</small></dd>
+                <dd>{{ zone[key] == null ? '--' : reading(zone[key], unit) }} <small>{{ delta(zone[key], previousSnapshot?.zones[zone.zone - 1]?.[key], unit) }}</small></dd>
               </div>
             </dl>
           </article>
@@ -555,10 +622,12 @@ const option = computed<EChartsOption>(() => {
     <div v-else class="replay-empty" role="status">
       <Loader2 v-if="busy" :size="16" class="animate-spin" />
       <span v-if="busy">正在读取历史记录并生成预测…</span>
-      <span v-else-if="!cycleId || !selected">当前实验缺少可播放的窑次或算法。</span>
+      <span v-else-if="!cycleId">当前实验缺少可播放的窑次。</span>
+      <span v-else-if="!requestedAlgorithms.length">请选择至少一种有已保存产物的算法。</span>
       <button v-else type="button" @click="generate">生成演示</button>
     </div>
     <footer>
+      <p v-if="!dashboardLayout">数据模型的多步预测会累积误差，预测时长越长，偏差可能越大。建议供参考，实际收益以现场验证为准。</p>
       <p v-if="task === 'afr'">燃气流量低于 {{ reading(experiment.parameters.minGas, 'Nm³/h') }} 或流量缺测时，实测空燃比留空。</p>
       <details class="model-evidence">
         <summary>建模依据与可预测条件</summary>
@@ -640,7 +709,13 @@ h3 { font-size:13px; font-weight:650; }
 .replay-header p,footer,.availability,.replay-empty,.timeline { color:var(--muted-foreground); }
 .replay-config { padding:14px 16px; border-bottom:1px solid var(--border); }
 .replay-config>label { display:flex; align-items:center; gap:7px; min-width:0; }
-.replay-config>label:nth-child(2) { flex:1 1 250px; }
+.replay-config>label:first-child { flex:1 1 250px; }
+.model-options { display:flex; flex:1 0 100%; flex-wrap:wrap; gap:7px 14px; padding-top:5px; }
+.model-options legend { color:var(--muted-foreground); }
+.model-options label,.model-status li { display:flex; align-items:center; gap:5px; }
+.model-status { display:flex; flex-wrap:wrap; gap:6px 14px; padding:10px 6px; color:var(--muted-foreground); }
+.model-status strong { color:var(--foreground); font-weight:600; }
+.model-dot { width:8px; height:8px; border-radius:50%; }
 select,button { color:inherit; background:var(--background); border:1px solid var(--border); border-radius:6px; padding:5px 9px; }
 select { max-width:100%; min-width:0; }
 button { display:inline-flex; align-items:center; gap:5px; }

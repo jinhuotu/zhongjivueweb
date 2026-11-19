@@ -6,6 +6,9 @@ import type { EChartsOption, LineSeriesOption } from 'echarts'
 import { ensureEcharts } from '@/components/ui-kit/charts/register'
 import { formatKilnChartValue, formatKilnNumber, formatKilnReading as numberText } from '@/lib/kiln-studio-format'
 import KilnTemperatureRecordUpload from './KilnTemperatureRecordUpload.vue'
+import KilnSafetyGuard from './KilnSafetyGuard.vue'
+import KilnOperationAdvice from './KilnOperationAdvice.vue'
+import KilnRealtimeFeedback from './KilnRealtimeFeedback.vue'
 import { studioGet, studioPost } from '@/lib/kiln-studio-api'
 import type {
   Bundle, Dataset, TemperatureAlert, TemperatureForecast, TemperatureReport,
@@ -13,6 +16,7 @@ import type {
 } from '@/lib/kiln-studio-api'
 
 const props = defineProps<{ bundle: Bundle; dataset?: Dataset; runs: TemperatureRun[]; defaultWindow?: 5 | 10 | 30; thermalEnabled?: boolean }>()
+const emit = defineEmits<{ configure: [] }>()
 ensureEcharts()
 
 const temperatureModel = computed(() => props.bundle.manifest.find(item => item.task === 'temperature'))
@@ -315,7 +319,7 @@ const option = computed<EChartsOption>(() => {
     })
     lines.push({
       name, type: 'line', data: seriesPoints.map(p => [p.minute, p[key] ?? null]),
-      showSymbol: algorithm, symbolSize: 6, connectNulls: false,
+      showSymbol: algorithm && value?.comparison?.algorithmTrajectory === 'fixedHorizon', symbolSize: 6, connectNulls: false,
       lineStyle: { color, width: key === 'setpoint' ? 1.5 : 2.6, type: dashed ? 'dashed' : 'solid',
         opacity: algorithm && value?.comparison?.algorithmTrajectory === 'fixedHorizon' ? 0 : 1 },
       itemStyle: { color },
@@ -417,7 +421,7 @@ async function selectChart(mode: typeof chartMode.value) {
     </header>
     <div class="desk-grid">
       <aside class="setup">
-        <h3>预测条件</h3>
+        <h3>操作设定 · 可输入</h3>
         <fieldset :disabled="busy">
           <div class="record-heading">
             <label for="kiln-temperature-record">烧成记录</label>
@@ -486,6 +490,9 @@ async function selectChart(mode: typeof chartMode.value) {
             <option v-for="item in runHistory" :key="item.id" :value="item.id">{{ fileName(item.title) }} · {{ dateText(item.originAt) }}</option>
           </select>
         </label>
+
+        <!-- 只读反馈区：当前工况 + 协同小趋势，随播放点联动 -->
+        <KilnRealtimeFeedback v-if="result" :forecast="result" :timeline-index="timelineIndex" />
       </aside>
 
       <div class="trend">
@@ -505,7 +512,14 @@ async function selectChart(mode: typeof chartMode.value) {
             <div v-if="comparison.endDeltaC != null"><span>调整前后相差</span><strong>{{ signedTemperature(comparison.endDeltaC) }}</strong></div>
             <div v-if="comparison.maxChangeC != null"><span>窗口最大温差 · +{{ comparison.maxChangeMinutes }} 分钟</span><strong>{{ signedTemperature(comparison.maxChangeC) }}</strong></div>
           </div>
+          <KilnSafetyGuard :forecast="result" />
+          <KilnOperationAdvice
+            :forecast="result"
+            :parameters="temperatureModel.parameters"
+            :timeline-index="timelineIndex"
+          />
           <div class="zoom-tools">
+            <button v-if="comparison?.algorithmTrajectory === 'fixedHorizon'" type="button" class="subtle" :disabled="busy" @click="emit('configure')">训练并启用逐分钟连续预测</button>
             <button class="subtle" :aria-pressed="chartMode === 'trend'" @click="selectChart('trend')">温度折线</button>
             <button v-if="comparison?.endDeltaC != null" class="subtle" :aria-pressed="chartMode === 'difference'" @click="selectChart('difference')">温差柱图</button>
             <button v-if="chartMode === 'trend'" class="subtle" @click="zoomForecast()">定位预测窗口</button>

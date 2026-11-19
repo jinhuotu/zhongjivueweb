@@ -1,17 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight, Download, FileArchive, FileText, FlaskConical, FolderOpen, History, Info, Loader2, Play, Plus, RotateCcw, Save, Settings2, Sparkles, Upload, X } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight, Download, FileArchive, FileText, FlaskConical, FolderOpen, History, Info, Loader2, PanelLeft, PanelRight, Play, Plus, RotateCcw, Save, Settings2, Sparkles, Upload, X } from 'lucide-vue-next'
 import { PageHeader } from '@/components/ui-kit'
+import KilnAlgorithmComparisonCharts from '@/components/production/KilnAlgorithmComparisonCharts.vue'
 import KilnAlgorithmResults from '@/components/production/KilnAlgorithmResults.vue'
 import KilnAlgorithmLibrary from '@/components/production/KilnAlgorithmLibrary.vue'
 import KilnMechanismCatalog from '@/components/production/KilnMechanismCatalog.vue'
+import KilnProjectKnowledge from '@/components/production/KilnProjectKnowledge.vue'
+import KilnDataConfirmation from '@/components/production/KilnDataConfirmation.vue'
 import KilnMechanismLibrary from '@/components/production/KilnMechanismLibrary.vue'
 import KilnPredictionReplay from '@/components/production/KilnPredictionReplay.vue'
 import KilnTemperatureZoneReview from '@/components/production/KilnTemperatureZoneReview.vue'
 import KilnStudioChart from '@/components/production/KilnStudioChart.vue'
 import KilnStudioTopology from '@/components/production/KilnStudioTopology.vue'
+import KilnProcessBoard from '@/components/production/KilnProcessBoard.vue'
+import KilnSourceSignals from '@/components/production/KilnSourceSignals.vue'
 import KilnForecastDashboard from '@/components/production/KilnForecastDashboard.vue'
+import KilnExperimentRunsTable from '@/components/production/KilnExperimentRunsTable.vue'
 import { createReplay, getDemoFile, getReplay, recommendAlgorithms, studioGet, studioPost, uploadStudio } from '@/lib/kiln-studio-api'
 import { externalAlgorithmIssue, hasUsableBacktest, sameExperimentConfig, samePhysicsParameters, sameTemplateSelection } from '@/lib/kiln-studio-state'
 import { algorithmTuningLabel, formatKilnNumber as fmt, formatKilnParameterInput, formatKilnReading, KILN_PARAMETER_DIGITS, kilnReadingDigits } from '@/lib/kiln-studio-format'
@@ -71,6 +77,7 @@ const assumptionsAccepted = ref(false)
 const library = ref<Mechanism[]>([])
 const catalog = ref<CatalogVersion[]>([])
 const catalogOpen = ref(false)
+const knowledgeOpen = ref(false)
 const catalogCompareKey = ref('')
 const catalogLoading = ref(false)
 const catalogError = ref('')
@@ -83,6 +90,8 @@ const config = ref<ExperimentConfig>({ ...initialExperiment, lockedParameters: [
 const experimentId = ref('')
 const replay = ref<ReplayPackage>()
 const showBacktest = ref(false)
+// 演示模式（默认，面向客户，只看结果与回放）/ 专家模式（工程师可改参数、看技术明细）
+const expertMode = ref(false)
 const replayExperimentSettings = ref<HTMLDetailsElement | null>(null)
 const comparisonId = ref('')
 const chartSplit = ref<'validation' | 'test'>('validation')
@@ -93,11 +102,12 @@ const advice = ref<AlgorithmRecommendationResponse>()
 const adviceLoading = ref(false)
 const adviceError = ref('')
 let adviceRequest: AbortController | undefined
+const savedAdvice = new Map<string, AlgorithmRecommendationResponse>()
 const confidenceLabels = { high: '高', medium: '中', low: '低' }
 const splitGuide: Record<string, { label: string; purpose: string }> = {
-  训练: { label: '学习规律', purpose: '用较早的记录建立模型。' },
-  验证: { label: '模拟考试', purpose: '用随后一段记录比较模型和调参。' },
-  测试: { label: '期末高考', purpose: '用留到最后的记录检查预测与实测相差多少。' },
+  训练: { label: '训练集', purpose: '用较早的记录建立模型。' },
+  验证: { label: '验证集', purpose: '用随后一段记录比较模型并调整参数。' },
+  测试: { label: '测试集', purpose: '用最后留出的记录核对预测与实测的偏差。' },
 }
 const bundleTitle = ref('窑炉预测组合模型')
 const bundleId = ref('')
@@ -109,6 +119,31 @@ let pollSequence = 0
 let loadSequence = 0
 let disposed = false
 let equipmentApplied = false
+
+// 岭回归 α 实际范围 0.001–10000，跨度很大；滑块用对数刻度（0–100 的位置映射到对数空间），避免小数值挤在一起
+const RIDGE_ALPHA_MIN = 0.001
+const RIDGE_ALPHA_MAX = 10000
+const ridgeAlphaSlider = computed<number>({
+  get: () => {
+    const current = Math.log10(config.value.ridgeAlpha || RIDGE_ALPHA_MIN)
+    const lo = Math.log10(RIDGE_ALPHA_MIN), hi = Math.log10(RIDGE_ALPHA_MAX)
+    return ((current - lo) / (hi - lo)) * 100
+  },
+  set: (position: number) => {
+    const lo = Math.log10(RIDGE_ALPHA_MIN), hi = Math.log10(RIDGE_ALPHA_MAX)
+    config.value.ridgeAlpha = Number(Math.pow(10, lo + (position / 100) * (hi - lo)).toFixed(4))
+  },
+})
+
+// 恢复实验默认参数：保留当前数据/机理选择与已选算法，只把窗口和模型设置还原为初始值
+function resetExperimentConfig() {
+  config.value.historyMinutes = initialExperiment.historyMinutes
+  config.value.ridgeAlpha = initialExperiment.ridgeAlpha
+  config.value.boostingRounds = initialExperiment.boostingRounds
+  config.value.learningRate = initialExperiment.learningRate
+  config.value.calibrate = initialExperiment.calibrate
+  config.value.lockedParameters = []
+}
 
 const project = computed(() => state.value?.project)
 const dataset = computed(() => state.value?.datasets.find(x => x.id === datasetId.value))
@@ -250,6 +285,25 @@ const replayMechanismRevision = computed(() => {
   return revision ? catalogById.value.get(revision) : undefined
 })
 const replayVisible = computed(() => step.value === 'experiment' && !!experiment.value && !!replayDataset.value)
+// 第3步（机理与参数）起进入专注模式：左右面板默认收起，可通过工具条手动展开，功能不丢失
+const focusSteps: Step[] = ['mechanism', 'experiment', 'bundle', 'knowledge']
+const focusMode = computed(() => focusSteps.includes(step.value))
+const leftPanelOpen = ref(false)
+const rightPanelOpen = ref(false)
+// 非专注步骤面板常显；专注步骤仅在展开且非 bundle/replay 时显示
+const showLeftPanel = computed(() => !focusMode.value ||
+  (leftPanelOpen.value && step.value !== 'bundle' && !replayVisible.value))
+const showRightPanel = computed(() => !focusMode.value ||
+  (rightPanelOpen.value && step.value !== 'bundle' && !replayVisible.value))
+// 工作区布局：非专注用默认三栏；专注时按展开情况给列，两侧都收起则单列
+const workspaceLayout = computed(() => {
+  if (!focusMode.value) return ''
+  if (step.value === 'bundle' || replayVisible.value) return 'forecast-layout'
+  if (leftPanelOpen.value && rightPanelOpen.value) return 'panels-both'
+  if (leftPanelOpen.value) return 'panels-left'
+  if (rightPanelOpen.value) return 'panels-right'
+  return 'forecast-layout'
+})
 const comparisonOptions = computed(() => {
   const current = experiment.value
   return current ? experiments.value.filter(x => x.id !== current.id && x.config.zone === current.config.zone &&
@@ -265,12 +319,16 @@ const selectionContext = computed(() => JSON.stringify([
     selectedAlgorithmKeys: currentConfig.value.selectedAlgorithmKeys?.slice().sort() ?? null }).sort(([left], [right]) => left.localeCompare(right)),
 ]))
 const adviceContext = computed(() => JSON.stringify([
-  projectId.value, selectionContext.value, experimentCurrent.value ? experiment.value?.id : null,
+  projectId.value, experiment.value?.id ?? selectionContext.value,
 ]))
 const advicePrimary = computed(() => advice.value?.algorithmCards.find(item => item.key === advice.value?.recommendation.primaryKey))
 const advisoryTest = computed(() => advicePrimary.value?.backtestStatus === 'backtested' && experiment.value
   ? experiment.value.algorithms.find(item => item.key === advicePrimary.value?.key)?.test
   : undefined)
+const adviceReasons = computed(() => [...new Set([
+  ...(advice.value?.recommendation.reasons ?? []),
+  ...(advicePrimary.value?.whyNow ? [advicePrimary.value.whyNow] : []),
+])].slice(0, 3))
 const experimentBlockReason = computed(() => {
   if (!dataset.value) return '请先到“数据确认”保存并选择数据版本。'
   if (!mechanism.value) return '请先到“机理与参数”保存机理，再在上方选择该机理版本。'
@@ -326,6 +384,7 @@ async function refreshProject(id = projectId.value) {
   if (!next.bundles.some(x => x.id === bundleId.value)) bundleId.value = next.bundles[0]?.id ?? ''
 }
 async function openProject(id: string) {
+  knowledgeOpen.value = false
   clearTimeout(pollTimer); pollSequence++; loadSequence++; state.value = null; activeJob.value = null; equipmentApplied = false
   datasetId.value = ''; mechanismId.value = ''; draftId.value = ''; experimentId.value = ''; comparisonId.value = ''; bundleId.value = ''; selectedFileId.value = ''; source.value = null; selections.value = {}; simulation.value = null
   mappings.value = {}; fileEnabled.value = {}; useStandard.value = {}; parameters.value = { ...defaults }; provenance.value = {}; parentId.value = null; calibrationExperimentId.value = null; assumptionsAccepted.value = false
@@ -402,6 +461,10 @@ function watchJob(job: Job) {
             pendingAlgorithm.value = undefined
           }
           else completionNotice = '实验已保存到历史记录。当前配置已变化，未用后台结果覆盖新配置。'
+        } else if (next.operation === 'knowledge_recognition' || (next.operation === 'parse' && knowledgeOpen.value)) {
+          await refreshProjects()
+          await refreshCatalog()
+          completionNotice = next.message
         } else if (next.operation !== 'replay') {
           step.value = 'data'
           await refreshProjects()
@@ -496,6 +559,7 @@ function generateReplay(request: ReplayRequest) { void action(async () => {
   if (!disposed && projectId.value === project) watchJob(job)
 }) }
 function showReplayExperimentSettings() {
+  expertMode.value = true  // 需要调整参数时自动进入专家模式，确保设置面板可见
   const settings = replayExperimentSettings.value
   if (!settings) return
   settings.open = true
@@ -574,10 +638,15 @@ function clearAdvice() {
   adviceError.value = ''
   adviceLoading.value = false
 }
-async function requestAdvice() {
-  const saved = experimentCurrent.value ? experiment.value : undefined
+async function requestAdvice(refresh = false) {
+  const saved = experiment.value
   if ((!saved && !experimentValid.value) || adviceLoading.value) return
   const context = adviceContext.value
+  const cached = saved && savedAdvice.get(context)
+  if (!refresh && cached) {
+    advice.value = cached
+    return
+  }
   const request = new AbortController()
   adviceRequest = request
   adviceLoading.value = true
@@ -586,8 +655,11 @@ async function requestAdvice() {
     const result = await recommendAlgorithms(projectId.value, {
       ...(saved?.config ?? currentConfig.value),
       experimentId: saved?.id ?? null,
-    }, request.signal)
-    if (!disposed && adviceContext.value === context && adviceRequest === request) advice.value = result
+    }, request.signal, !!saved && !refresh)
+    if (!disposed && adviceContext.value === context && adviceRequest === request) {
+      if (saved) savedAdvice.set(context, result)
+      advice.value = result
+    }
   } catch (err) {
     if (!request.signal.aborted && adviceRequest === request) adviceError.value = message(err)
   } finally {
@@ -639,6 +711,14 @@ function exportBundle() { void action(async () => {
 function refreshLibrary() {
   if (dataset.value) { step.value = 'knowledge'; return }
   void action(async () => { library.value = (await studioGet<{ items: Mechanism[] }>('/knowledge')).items; step.value = 'knowledge' })
+}
+function openKnowledge() {
+  knowledgeOpen.value = true
+  void refreshCatalog()
+}
+async function refreshKnowledge() {
+  try { await refreshProject(); await refreshProjects(); await refreshCatalog() }
+  catch (err) { error.value = message(err) }
 }
 async function refreshCatalog() {
   const request = ++catalogRequest
@@ -778,7 +858,12 @@ watch(activeTemplate, () => {
   if (step.value === 'mechanism' && mechanismDetailsPanel.value) mechanismDetailsPanel.value.scrollTop = 0
 }, { flush: 'post' })
 watch(selectionContext, () => { pendingAlgorithm.value = undefined })
-watch(adviceContext, clearAdvice)
+watch([step, adviceContext], ([currentStep, context], previous) => {
+  if (context !== previous?.[1]) clearAdvice()
+  leftPanelOpen.value = false
+  rightPanelOpen.value = false
+  if (currentStep === 'experiment' && experiment.value) void requestAdvice()
+}, { immediate: true })
 watch([projectId, () => experiment.value?.id], () => {
   if (replay.value?.request.experimentId !== experiment.value?.id) replay.value = undefined
   showBacktest.value = false
@@ -797,6 +882,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
     <input ref="input" type="file" accept=".zip,.xls,.xlsx,.csv,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg" multiple hidden @change="onFiles" />
     <PageHeader title="窑炉机理与预测建模" description="从资料依据出发，构建机理、比较算法，并保存可以复现的模型版本。">
       <template #actions>
+        <button v-if="project" type="button" class="btn" @click="openKnowledge"><BookOpen :size="14" />知识库</button>
         <button v-if="!project || step !== 'mechanism'" type="button" class="btn" @click="openCatalog()"><BookOpen :size="14" />机理库<span v-if="pendingCatalogCount"> · {{ pendingCatalogCount }} 条待审核</span></button>
         <button class="btn" @click="showGuide = true"><Info :size="14" />演示讲解</button>
         <button class="btn" :disabled="running" title="载入新项目；合成数据不代表现场精度" @click="demo"><Play :size="14" />合成样例</button>
@@ -814,7 +900,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
       <div v-if="project" class="flex gap-5 text-[11px] text-muted-foreground"><span>{{ summaryCounts.files }} 份文件</span><span>{{ fmt(summaryCounts.rows, 0) }} 行数据</span><span>{{ summaryCounts.experiments }} 次实验</span><span>{{ summaryCounts.versions }} 个机理版本</span></div>
     </div>
 
-    <nav v-if="project" class="step-nav" aria-label="建模流程"><button v-for="(item, i) in steps" :key="item.key" :class="{ active: step === item.key }" @click="item.key === 'knowledge' ? refreshLibrary() : step = item.key"><span class="step-number">{{ i + 1 }}</span><span><strong>{{ item.title }}</strong><small>{{ item.subtitle }}</small></span><ChevronRight v-if="i < steps.length - 1" :size="13" class="step-chevron" /></button></nav>
+    <nav v-if="project" class="step-nav" aria-label="建模流程"><button v-for="(item, i) in steps" :key="item.key" :class="{ active: !knowledgeOpen && step === item.key }" @click="knowledgeOpen = false; item.key === 'knowledge' ? refreshLibrary() : step = item.key"><span class="step-number">{{ i + 1 }}</span><span><strong>{{ item.title }}</strong><small>{{ item.subtitle }}</small></span><ChevronRight v-if="i < steps.length - 1" :size="13" class="step-chevron" /></button></nav>
 
     <div v-if="activeJob" class="job-bar" :class="{ failed: activeJob.status === 'failed' }">
       <Loader2 v-if="['queued', 'running'].includes(activeJob.status)" class="animate-spin" :size="15" /><Check v-else-if="activeJob.status === 'succeeded'" :size="15" /><Info v-else :size="15" />
@@ -828,10 +914,24 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
       <div class="intro-grid"><article><span>01 / 资料有来源</span><h3>每个机理都能打开依据</h3><p>文档片段、字段映射与人工假设分别展示，识别冲突后再确认。</p></article><article><span>02 / 算法能解释</span><h3>按预测任务比较算法</h3><p>温度、燃气能耗和空燃比各自实验，展示公式、输入、误差和限制。</p></article><article><span>03 / 经验能复用</span><h3>保留机理与参数版本</h3><p>新数据不覆盖旧知识，可沿用旧参数验证，或使用新数据重新标定。</p></article></div>
     </template>
 
+    <KilnProjectKnowledge v-else-if="knowledgeOpen" :key="project.id" :project="project" :catalog="catalog"
+      :disabled="running" :catalog-error="catalogError" @close="knowledgeOpen = false" @catalog="openCatalog()"
+      @changed="refreshKnowledge" @job="watchJob" />
     <template v-else>
-      <div class="workspace" :class="{ 'wide-center': step === 'data' || step === 'knowledge', 'forecast-layout': step === 'bundle' || replayVisible }">
-        <aside v-if="step !== 'bundle' && !replayVisible" class="left-panel surface">
-          <div class="section-head"><span>项目资料</span><span class="text-muted-foreground">{{ project.files.length }}</span></div>
+      <div v-if="focusMode" class="focus-toolbar">
+        <button type="button" class="focus-toggle" :aria-expanded="leftPanelOpen" @click="leftPanelOpen = !leftPanelOpen">
+          <PanelLeft :size="13" />项目资料
+        </button>
+        <button type="button" class="focus-toggle" :aria-expanded="rightPanelOpen" @click="rightPanelOpen = !rightPanelOpen">
+          <PanelRight :size="13" />{{ step === 'mechanism' ? '机理参数与依据' : '建模依据与选型' }}
+        </button>
+      </div>
+      <div class="workspace" :class="workspaceLayout">
+        <aside v-if="showLeftPanel" class="left-panel surface">
+          <div class="section-head"><span>项目资料</span>
+            <span class="head-actions"><span class="text-muted-foreground">{{ project.files.length }}</span>
+              <button v-if="focusMode" type="button" class="panel-close" aria-label="收起项目资料" @click="leftPanelOpen = false"><X :size="13" /></button>
+            </span></div>
           <div class="file-list"><button v-for="file in project.files" :key="file.id" :class="{ selected: selectedFileId === file.id }" @click="selectedFileId = file.id; if (step !== 'data') step = 'archive'"><FileText :size="14" /><span><strong>{{ file.path }}</strong><small>{{ statusLabel[file.status] }} · {{ file.kind === 'table' ? `${fmt(file.rowCount, 0)} 行` : `${file.sources.length} 个片段` }}</small></span><span class="dot" :class="file.status" /></button><p v-if="!project.files.length" class="hint p-4">资料正在排队处理，完成后显示文件清单。</p></div>
           <div class="section-head border-top"><span>数据版本</span><small>{{ state?.datasets.length }}</small></div>
           <div class="p-3"><select v-model="datasetId" class="control w-full" aria-label="选择数据版本"><option value="" disabled>先完成数据确认</option><option v-for="item in state?.datasets" :key="item.id" :value="item.id">{{ item.title }}</option></select><div v-if="dataset" class="dataset-meta"><span>{{ dataset.config.kilnCode }} · {{ dataset.config.zoneCount }} 温区</span><span>{{ fmt(dataset.rowCount, 0) }} 行 · {{ dataset.summary.length }} 个文件</span><span :class="{ warning: dataset.sourceKind === 'synthetic' }">{{ dataset.sourceKind === 'synthetic' ? '合成演示数据，非现场实测' : '来自用户上传资料' }}</span><span class="mono">{{ dataset.dataHash.slice(0, 12) }}</span></div></div>
@@ -843,7 +943,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
           <template v-if="step === 'archive'">
             <section class="surface"><div class="section-head"><div><h2>资料解析结果</h2><p>工况数值由解析器提取，文档理解保留原文位置。</p></div><button class="btn tiny" :disabled="busy || loading" @click="returnToUpload"><Plus :size="12" />新建资料项目</button></div><div class="p-5">
               <template v-if="selectedFile"><div class="flex items-start justify-between gap-4 mb-4"><div class="min-w-0"><h3 class="break-all">{{ selectedFile.path }}</h3><p class="hint mt-2">{{ selectedFile.message }}</p></div><span class="badge">{{ statusLabel[selectedFile.status] }}</span></div>
-                <div v-if="selectedFile.kind === 'table'" class="table-wrap"><table><thead><tr><th>原始字段</th><th>样本</th></tr></thead><tbody><tr v-for="column in selectedFile.columns" :key="column.id"><td>{{ column.label }}</td><td class="mono">{{ column.sample }}</td></tr></tbody></table></div>
+                <KilnSourceSignals v-if="selectedFile.kind === 'table' && selectedFile.status !== 'failed'" :project-id="projectId" :file="selectedFile" />
                 <div v-else-if="selectedFile.sources.length" class="source-list"><button v-for="fragment in selectedFile.sources" :key="fragment.id" @click="source = fragment"><small>{{ fragment.location }} · {{ fragment.id.slice(-5) }}</small><p>{{ fragment.text }}</p></button></div>
                 <div v-else class="empty-inline">{{ selectedFile.status === 'failed' ? '当前文件解析失败，请查看原因并重试任务，或转换为支持的格式后重新上传。' : '原文件已保留；当前没有可以展示的文本或数据。' }}</div>
               </template><p v-else class="hint">选择左侧文件查看解析结果。</p>
@@ -852,17 +952,19 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
             <div class="flex justify-end"><button class="btn primary" :disabled="project.status !== 'parsed'" @click="step = 'data'">确认数据与设备<ArrowRight :size="14" /></button></div>
           </template>
 
-          <template v-else-if="step === 'data'">
-            <section class="surface"><div class="section-head"><div><h2>设备结构与数据口径</h2><p>每个勾选的表格文件视作一个独立窑次；修改会生成新数据版本。</p></div><button class="btn" :disabled="running || project.status !== 'parsed'" @click="interpretFields"><Sparkles :size="13" />AI识别测点与单位</button></div><div class="p-5 space-y-4"><div class="form-grid"><label>窑炉编号<input v-model="kilnCode" class="control" maxlength="40" /></label><label>有效温区数<input v-model.number="zoneCount" type="number" min="1" max="16" class="control" /></label><label>烧嘴数量<input v-model.number="burnerCount" type="number" min="1" max="64" class="control" /></label></div><div v-if="project.equipmentSuggestion" class="hint">已根据文档或字段预填设备数量，请核对后确认。<button v-for="item in project.equipmentSuggestion.evidence" :key="item.id" class="citation" @click="source = item">{{ item.file }} · {{ item.location }}：{{ item.text }}</button></div><label class="check-line"><input v-model="flowConfirmed" type="checkbox" />已确认空气和燃气都是相同标况口径，单位为 Nm³/h</label><label class="check-line"><input v-model="acknowledge" type="checkbox" />已核对资料冲突、温区/烧嘴数量，并区分流量空燃比与阀位比</label><p v-for="item in project.conflicts" :key="item" class="warning-note">{{ item }}</p></div></section>
-            <section v-if="state?.mappingDrafts[0]" class="surface p-5"><div class="flex justify-between gap-3"><h3>AI测点解析建议</h3><button class="btn tiny" :disabled="running" @click="applyFieldSuggestions">填入建议并人工确认</button></div><p class="hint mt-3">{{ state.mappingDrafts[0].summary }}</p><p v-for="file in state.mappingDrafts[0].files" :key="file.fileId" class="hint mt-2">{{ project.files.find(f => f.id === file.fileId)?.path }}：{{ file.reason }}</p><p v-for="text in state.mappingDrafts[0].warnings" :key="text" class="warning-note mt-2">{{ text }}</p></section><section v-for="file in dataFiles" :key="file.id" class="surface"><div class="section-head"><label class="check-line"><input v-model="fileEnabled[file.id]" type="checkbox" /><span>{{ file.path }}</span></label><small>{{ fmt(file.rowCount, 0) }} 行</small></div><div v-if="fileEnabled[file.id]" class="p-4"><label v-if="file.standard" class="check-line mb-3"><input v-model="useStandard[file.id]" type="checkbox" />使用标准温度/压力双表自动合并</label><template v-if="!useStandard[file.id]"><p class="hint mb-3">数值换算：标准值 = 原始值 × 倍率 + 偏移。温度 ℃、流量 Nm³/h、压力 Pa、氧含量 %。时间列使用原始值解析。</p><div class="table-wrap"><table><thead><tr><th>原始字段 / 样本</th><th>标准测点</th><th>倍率</th><th>偏移</th></tr></thead><tbody><tr v-for="column in file.columns" :key="column.id"><td><div>{{ column.label }}</div><small class="text-muted-foreground">{{ column.sample }}</small></td><td><select :value="mappings[file.id]?.find(m => m.column === column.id)?.field ?? ''" class="control mapping-select" :aria-label="column.label + '映射'" @change="setColumn(file.id, column.id, $event)"><option value="">不使用</option><option v-for="field in state?.fields" :key="field.key" :value="field.key">{{ field.label }}</option></select></td><template v-if="mappings[file.id]?.find(m => m.column === column.id && m.field !== 'ts')"><td><input v-model.number="mappings[file.id]!.find(m => m.column === column.id)!.scale" type="number" min="0.000001" step="any" class="control small-number" aria-label="单位换算倍率" /></td><td><input v-model.number="mappings[file.id]!.find(m => m.column === column.id)!.offset" type="number" step="any" class="control small-number" aria-label="单位换算偏移" /></td></template><template v-else><td>—</td><td>—</td></template></tr></tbody></table></div></template></div></section>
-            <div v-if="!dataFiles.length" class="surface p-6 space-y-3"><template v-if="unexpandedZips.length"><p class="warning-note">检测到 {{ unexpandedZips.length }} 个尚未展开的内层 ZIP，窑炉数据可能在其中。可以直接从已上传的原始文件重新解析，无需重新上传。</p><button class="btn primary" :disabled="running" @click="reparseProject"><RotateCcw :size="14" />展开内层 ZIP 并重新解析</button></template><p v-else class="hint">本次扫描未发现可用的 CSV、XLS 或 XLSX 工况表。请在“资料解析”查看各文件原因；已支持 ZIP 内嵌 ZIP，可以点击“重新解析资料包”重试。</p><p v-if="project.archiveSummary" class="hint">已展开内层 ZIP {{ project.archiveSummary.nestedArchiveCount }} 个 · 待处理文件 {{ project.archiveSummary.attentionCount }} 份。解析进度100%表示扫描结束，不代表每个文件均已成功读取。</p></div>
-            <section v-if="dataset" class="surface p-5"><h3>当前数据版本的质量概况</h3><div v-for="item in dataset.summary" :key="item.fileId" class="quality-row"><strong>{{ item.file }}</strong><p>{{ time(item.from) }} — {{ time(item.to) }} · {{ fmt(item.count, 0) }} 行 · 无效时间 {{ item.skippedTimeRows }} · 重复时间 {{ item.duplicateTimes }}</p><div class="flex flex-wrap gap-2 mt-2"><span v-for="field in item.fields" :key="field.key" class="badge">{{ state?.fields.find(f => f.key === field.key)?.label ?? field.key }} {{ fmt(field.present / field.total * 100, 1) }}%</span></div></div><p v-for="text in dataset.qualityNotes" :key="text" class="hint mt-2">{{ text }}</p></section>
-            <div class="flex justify-end"><button class="btn primary" :disabled="running || !flowConfirmed || !acknowledge || !dataFiles.length" @click="confirm"><Check :size="14" />确认并保存数据版本</button></div>
-          </template>
+          <KilnDataConfirmation v-else-if="step === 'data'" :key="project.id"
+            :project="project" :files="dataFiles" :fields="state?.fields ?? []" :dataset="dataset"
+            :mapping-draft="state?.mappingDrafts[0]" :unexpanded-zip-count="unexpandedZips.length" :disabled="running"
+            v-model:kiln-code="kilnCode" v-model:zone-count="zoneCount" v-model:burner-count="burnerCount"
+            v-model:flow-confirmed="flowConfirmed" v-model:acknowledge="acknowledge"
+            v-model:file-enabled="fileEnabled" v-model:use-standard="useStandard" v-model:mappings="mappings"
+            @confirm="confirm" @interpret="interpretFields" @apply-suggestions="applyFieldSuggestions"
+            @reparse="reparseProject" @source="source = $event" @column="setColumn" />
 
           <template v-else-if="step === 'mechanism'">
+            <KilnProcessBoard v-if="dataset" :key="dataset.id" :dataset="dataset" :initial-cycle="selectedFileId" @mechanism="activeTemplate = $event" />
             <section class="surface p-5"><div class="flex flex-wrap gap-3 justify-between items-center"><div><h2>从资料构建机理候选</h2><p class="hint mt-1">先解释关系与假设，再标定参数；所有计算使用受控求解器。</p></div><div class="flex gap-2"><button class="btn" :disabled="running || !dataset" @click="generate('template')">资料匹配模板</button><button class="btn primary" :disabled="running || !dataset" @click="generate('ai')"><Sparkles :size="14" />AI 理解资料并构建机理</button></div></div><p v-if="!dataset" class="warning-note mt-3">先到“数据确认”保存数据版本。</p><div v-if="draft" class="interpretation"><span class="badge">{{ draft.mode === 'ai' ? `AI 资料解析 · ${draft.llmModel}` : '工程模板匹配 · 未调用大模型' }}</span><p>{{ draft.summary }}</p><p v-if="draft.citationAudit" class="hint mt-2">已核验 {{ draft.citationAudit.verifiedCount }} 条资料引用；已排除 {{ draft.citationAudit.discardedCount }} 条不匹配引用。原文由系统从来源提取，AI关联解释仍需人工确认。</p><button v-for="item in draft.aiEvidence" :key="item.sourceId + item.quote" class="citation" @click="source = item.source">{{ item.source.file }} · {{ item.source.location }}<small>{{ item.reason }}</small></button><p v-for="text in draft.warnings" :key="text" class="hint mt-2">{{ text }}</p></div></section>
-            <KilnStudioTopology :zones="dataset?.config.zoneCount ?? zoneCount" :burners="dataset?.config.burnerCount ?? burnerCount" :templates="state?.templates ?? []" :active="activeTemplate" :enabled="templateKeys" @select="activeTemplate = $event" />
+            <KilnStudioTopology v-if="!dataset" :zones="zoneCount" :burners="burnerCount" :templates="state?.templates ?? []" :active="activeTemplate" :enabled="templateKeys" @select="activeTemplate = $event" />
             <section class="surface">
               <div class="section-head scope-head"><div><h2>机理清单与求解范围</h2><p>启用 {{ enabledSolvers }} 个求解机理 · 收录 {{ collectedMechanisms }} 个参考关系<span v-if="catalogAlternatives.length"> · {{ catalogAlternatives.length }} 个备选</span></p></div><button type="button" class="btn tiny" @click="openCatalog()"><BookOpen :size="13" />机理库<span v-if="pendingCatalogCount"> · {{ pendingCatalogCount }} 条待审核</span></button></div>
               <div v-if="mechanismCoverage.length" class="scope-coverage" aria-label="当前数据字段覆盖">
@@ -910,6 +1012,37 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
           </template>
 
           <template v-else-if="step === 'experiment'">
+            <section class="surface conclusion-card" aria-labelledby="kiln-conclusion-title">
+              <h2 id="kiln-conclusion-title">选型结论</h2>
+              <div class="p-4 space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div v-if="advicePrimary"><h3>建议先试用 {{ advicePrimary.name }}</h3><p>{{ advicePrimary.oneLine }}</p></div>
+                  <p v-else class="hint">{{ adviceLoading ? '正在根据已保存的实验整理选型结论。' : advice ? '当前记录还不足以给出首选算法。' : '完成算法对比后，这里会给出首选和历史误差。' }}</p>
+                  <button type="button" class="btn" :disabled="(!experiment && !experimentValid) || adviceLoading" @click="requestAdvice(true)">
+                    <Loader2 v-if="adviceLoading" :size="14" class="animate-spin" /><Sparkles v-else :size="14" />
+                    {{ adviceLoading ? '正在整理建议' : advice ? 'AI 补充说明' : '查看建议' }}
+                  </button>
+                </div>
+                <p v-if="adviceError" class="warning-note" role="alert">{{ adviceError }}</p>
+                <template v-if="advice">
+                  <p v-if="advicePrimary && advisoryTest?.mae != null && advisoryTest.count > 0">
+                    {{ experiment?.sourceKind === 'synthetic' ? '在合成演示的测试集上' : '在历史记录的测试集上' }}，提前 {{ experiment?.config.horizonMinutes }} 分钟预测的数值平均与实测相差
+                    <strong>{{ formatKilnReading(advisoryTest.mae, experiment?.unit) }}</strong>。
+                    <span v-if="advisoryTest.coverage < 1" class="hint">基于有预测结果的 {{ fmt(advisoryTest.coverage * 100, 1) }}% 时刻。</span>
+                  </p>
+                  <p v-else class="hint">{{ experiment ? '这个建议暂无可展示的历史误差。' : '还没有回测结果。以下为适配建议。' }}</p>
+                  <div v-if="adviceReasons.length"><h4>为什么推荐</h4><ul class="list-disc pl-4"><li v-for="reason in adviceReasons" :key="reason">{{ reason }}</li></ul></div>
+                  <p v-if="advicePrimary?.benefits.length"><b>能帮你做什么</b> {{ advicePrimary.benefits.join('。') }}</p>
+                  <p v-if="advice.recommendation.backupKey">备选 {{ advice.algorithmCards.find(item => item.key === advice?.recommendation.backupKey)?.name ?? algorithmName(advice.recommendation.backupKey) }}</p>
+                  <details class="hint">
+                    <summary class="cursor-pointer">{{ advice.mode === 'ai' ? 'AI 整理' : '规则建议' }} · 置信度{{ confidenceLabels[advice.recommendation.confidence] }} · 适用范围</summary>
+                    <p>{{ advice.recommendation.confidenceBasis }}</p>
+                    <p v-for="caveat in advice.recommendation.dataCaveats" :key="caveat">{{ caveat }}</p>
+                  </details>
+                  <p class="hint">{{ advice.recommendation.disclaimer }}</p>
+                </template>
+              </div>
+            </section>
             <section class="surface">
               <div class="task-tabs">
                 <button v-for="task in taskList" :key="task" :class="{ active: config.task === task }"
@@ -931,10 +1064,26 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
               </div>
             </section>
 
+            <KilnPredictionReplay v-if="replayVisible && experiment && replayDataset" :key="experiment.id"
+              :experiment="experiment" :dataset="replayDataset" :replay="replay" :busy="running"
+              :mechanism="replayMechanism" :mechanism-template="replayTemplate" :mechanism-revision="replayMechanismRevision"
+              :parameter-definitions="state?.parameterDefinitions ?? []"
+              :preferred-algorithm="selections[experiment.config.task]?.experimentId === experiment.id ? selections[experiment.config.task]?.algorithm : undefined"
+              @generate="generateReplay"
+              @configure="experiment.config.task === 'temperature' ? prepareZoneExperiment(experiment.config.zone) : showReplayExperimentSettings()" />
+            <p v-else-if="!experiment" class="surface p-5 hint">当前任务还没有已保存的结果。完成一次算法对比后即可查看。</p>
+            <p v-else class="surface p-5 hint">当前项目未加载实验对应的数据版本。可展开技术详情查看已保存的对比。</p>
+
             <section class="surface">
               <div class="section-head">
                 <div><h2>本次算法对比</h2><p>{{ labels[config.task] }} · {{ comparisonAlgorithmKeys.length }} 个参选项</p></div>
-                <button type="button" class="btn" @click="algorithmLibraryOpen = true"><BookOpen :size="14" />算法库</button>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <div class="segmented" role="group" aria-label="操作模式">
+                    <button type="button" :class="{ active: !expertMode }" @click="expertMode = false">演示模式</button>
+                    <button type="button" :class="{ active: expertMode }" @click="expertMode = true">专家模式</button>
+                  </div>
+                  <button type="button" class="btn" @click="algorithmLibraryOpen = true"><BookOpen :size="14" />算法库</button>
+                </div>
               </div>
               <div class="algorithm-comparison">
                 <div v-if="comparisonAlgorithmKeys.length" class="algorithm-chips" aria-label="本次对比清单">
@@ -957,78 +1106,26 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
                 </div>
               </div>
             </section>
-            <section v-if="experiment?.config.task === 'temperature' && replayDataset && qualityAlgorithms.length" class="surface p-4 space-y-3" aria-label="算法验收指标">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div><h3>查看这个算法是否满足温度预测要求</h3><p class="hint">切换核验算法，可查看完整留出记录的误差和对应温度曲线。</p></div>
-                <label>核验算法<select v-model="qualityModel" class="control ml-2" aria-label="选择核验算法"><option v-for="item in qualityAlgorithms" :key="item.key" :value="item.key">{{ item.name }}</option></select></label>
-              </div>
-              <KilnTemperatureZoneReview :key="experiment.id" :experiment="experiment" :algorithm="qualityModel"
-                :experiments="experiments" :dataset="replayDataset" :busy="running"
-                train-label="打开该区的 30 分钟训练设置" @train="prepareZoneExperiment" />
-            </section>
-            <KilnPredictionReplay v-if="replayVisible && experiment && replayDataset" :key="experiment.id"
-              :experiment="experiment" :dataset="replayDataset" :replay="replay" :busy="running"
-              :mechanism="replayMechanism" :mechanism-template="replayTemplate" :mechanism-revision="replayMechanismRevision"
-              :parameter-definitions="state?.parameterDefinitions ?? []"
-              :preferred-algorithm="selections[experiment.config.task]?.experimentId === experiment.id ? selections[experiment.config.task]?.algorithm : undefined"
-              @generate="generateReplay"
-              @configure="experiment.config.task === 'temperature' ? prepareZoneExperiment(experiment.config.zone) : showReplayExperimentSettings()" />
-            <p v-else-if="!experiment" class="surface p-5 hint">当前任务还没有已保存的结果。完成一次算法对比后即可查看。</p>
-            <p v-else class="surface p-5 hint">当前项目未加载实验对应的数据版本。可展开技术详情查看已保存的对比。</p>
-
-            <details class="surface result-details">
-              <summary>选型结论<span v-if="advicePrimary" class="hint ml-2">{{ advicePrimary.name }}</span></summary>
-              <div class="p-4 space-y-3 border-top">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                  <p v-if="advicePrimary">建议先试用 <strong>{{ advicePrimary.name }}</strong> · {{ advicePrimary.oneLine }}</p>
-                  <p v-else class="hint">查看哪个算法适合当前任务，以及能帮助你做什么。</p>
-                  <button type="button" class="btn" :disabled="(!experiment && !experimentValid) || adviceLoading" @click="requestAdvice">
-                    <Loader2 v-if="adviceLoading" :size="14" class="animate-spin" /><Sparkles v-else :size="14" />
-                    {{ adviceLoading ? '正在整理建议' : advice ? '刷新建议' : '查看建议' }}
-                  </button>
-                </div>
-                <p v-if="adviceError" class="warning-note" role="alert">{{ adviceError }}</p>
-                <template v-if="advice">
-                  <p v-if="advicePrimary && advisoryTest?.mae != null && advisoryTest.count > 0">
-                    这次历史核对中，提前 {{ experiment?.config.horizonMinutes }} 分钟预测的数值平均与实测相差
-                    <strong>{{ formatKilnReading(advisoryTest.mae, experiment?.unit) }}</strong>。
-                    <span v-if="advisoryTest.coverage < 1" class="hint">基于有预测结果的 {{ fmt(advisoryTest.coverage * 100, 1) }}% 时刻。</span>
-                  </p>
-                  <p v-else class="hint">{{ experiment ? '这个建议暂无可展示的历史误差。' : '还没有回测结果。以下为适配建议。' }}</p>
-                  <ul class="list-disc pl-4"><li v-for="reason in advice.recommendation.reasons.slice(0, 3)" :key="reason">{{ reason }}</li></ul>
-                  <p v-if="advicePrimary?.benefits.length"><b>能帮你做什么</b> {{ advicePrimary.benefits.join('。') }}</p>
-                  <p v-if="advice.recommendation.backupKey">备选 {{ advice.algorithmCards.find(item => item.key === advice?.recommendation.backupKey)?.name ?? algorithmName(advice.recommendation.backupKey) }}</p>
-                  <details class="hint">
-                    <summary class="cursor-pointer">{{ advice.mode === 'ai' ? 'AI 整理' : '规则建议' }} · 置信度{{ confidenceLabels[advice.recommendation.confidence] }} · 适用范围</summary>
-                    <p>{{ advice.recommendation.confidenceBasis }}</p>
-                    <p v-for="caveat in advice.recommendation.dataCaveats" :key="caveat">{{ caveat }}</p>
-                  </details>
-                  <p class="hint">{{ advice.recommendation.disclaimer }}</p>
-                </template>
-              </div>
-            </details>
-
-            <details v-if="experiment" class="surface result-details" :open="showBacktest"
+            <KilnAlgorithmResults
+              v-if="experiment || comparisonAlgorithms.length"
+              :library="comparisonAlgorithms"
+              :experiment="experiment"
+              :selection-matches-experiment="experimentCurrent"
+              :split="chartSplit"
+              :comparison="comparison"
+              :selected="experimentCurrent && selections[config.task]?.experimentId === experiment?.id ? selections[config.task]?.algorithm : undefined"
+              :pending="pendingAlgorithm"
+              :advice="experimentCurrent || !experiment ? advice?.algorithmCards : undefined"
+              :can-select="experimentValid && !running"
+              @select="selectAlgorithm"
+            />
+            <KilnAlgorithmComparisonCharts :key="experiment?.id ?? config.task" :library="state?.algorithmLibrary ?? []" :experiment="experiment" />
+            <KilnExperimentRunsTable v-show="expertMode" :experiments="experiments" :active-id="experimentId"
+              :unit="experiments[0]?.unit ?? ''" :busy="running" @open="openExperiment" />
+            <details v-if="experiment" v-show="expertMode" class="surface result-details" :open="showBacktest"
               @toggle="showBacktest = ($event.currentTarget as HTMLDetailsElement).open">
-              <summary>技术详情 · 回测明细</summary>
+              <summary>技术详情 · 回测明细 <span class="hint ml-2">查看历史对照、误差和数据划分</span></summary>
               <template v-if="showBacktest">
-                <div class="p-4 border-top flex flex-wrap justify-between gap-3">
-                  <div>
-                    <h3>{{ labels[experiment.config.task] }} · 提前 {{ experiment.config.horizonMinutes }} 分钟</h3>
-                    <p class="hint">想核对每个模型在过去的表现，可以在这里比较预测和实测。</p>
-                  </div>
-                  <div class="segmented">
-                    <button :class="{ active: chartSplit === 'validation' }" @click="chartSplit = 'validation'">验证集</button>
-                    <button :class="{ active: chartSplit === 'test' }" @click="chartSplit = 'test'">测试集</button>
-                  </div>
-                </div>
-                <label v-if="comparisonOptions.length" class="block px-4 pb-3">对照机理
-                  <select v-model="comparisonId" class="control">
-                    <option value="">不比较</option>
-                    <option v-for="item in comparisonOptions" :key="item.id" :value="item.id">{{ item.title }} · {{ time(item.createdAt) }}</option>
-                  </select>
-                </label>
-                <KilnStudioChart :key="experiment.id" :experiment="experiment" :split="chartSplit" :comparison="comparison" />
                 <div class="p-4 space-y-3 border-top">
                   <div class="split-summary">
                     <article v-for="item in experiment.split" :key="item.name">
@@ -1037,7 +1134,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
                       <p>{{ fmt(item.count, 0) }} 个可用预测时刻 · {{ time(item.from) }} 至 {{ time(item.to) }}</p>
                     </article>
                   </div>
-                  <p class="hint">按时间先后分开学习和检验。每次预测只用当时的实测和已知设定。成绩反映这段历史，现场表现还需验证。</p>
+                  <p class="hint">严格按时间划分学习和检验。每次预测只用预测起点、之前的测点与已知设定。现场表现仍需独立验证。</p>
                   <p v-if="experiment.splitMethod.includes('同窑次')" class="hint">这次在同一窑次内按时间检查，跨窑次的表现仍需核对。</p>
                   <p v-if="chartSplit === 'test'" class="hint">如果参考了测试集选算法，可另留一段新记录做最终核验。</p>
                   <details>
@@ -1052,10 +1149,38 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
                     <button type="button" class="btn tiny mt-3" :disabled="running" @click="promoteCalibration"><Save :size="12" />将标定参数存为知识版本</button>
                   </details>
                 </div>
+                <section aria-label="静态回测曲线">
+                    <div class="p-4 border-top flex flex-wrap justify-between gap-3">
+                      <div>
+                        <h3>预测与实测对比 · {{ labels[experiment.config.task] }} · 提前 {{ experiment.config.horizonMinutes }} 分钟</h3>
+                        <p class="hint">同一窑次、同一时刻对齐实测与各算法预测。</p>
+                      </div>
+                      <div class="segmented">
+                        <button :class="{ active: chartSplit === 'validation' }" @click="chartSplit = 'validation'">验证集</button>
+                        <button :class="{ active: chartSplit === 'test' }" @click="chartSplit = 'test'">测试集</button>
+                      </div>
+                    </div>
+                    <label v-if="comparisonOptions.length" class="block px-4 pb-3">对照机理
+                      <select v-model="comparisonId" class="control">
+                        <option value="">不比较</option>
+                        <option v-for="item in comparisonOptions" :key="item.id" :value="item.id">{{ item.title }} · {{ time(item.createdAt) }}</option>
+                      </select>
+                    </label>
+                    <KilnStudioChart :key="experiment.id" :experiment="experiment" :split="chartSplit" :comparison="comparison" />
+                </section>
+                <section v-if="experiment?.config.task === 'temperature' && replayDataset && qualityAlgorithms.length" class="surface p-4 space-y-3" aria-label="算法验收指标">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div><h3>查看这个算法是否满足温度预测要求</h3><p class="hint">切换核验算法，可查看完整留出记录的误差和对应温度曲线。</p></div>
+                    <label>核验算法<select v-model="qualityModel" class="control ml-2" aria-label="选择核验算法"><option v-for="item in qualityAlgorithms" :key="item.key" :value="item.key">{{ item.name }}</option></select></label>
+                  </div>
+                  <KilnTemperatureZoneReview :key="experiment.id" :experiment="experiment" :algorithm="qualityModel"
+                    :experiments="experiments" :dataset="replayDataset" :busy="running"
+                    train-label="打开该区的 30 分钟训练设置" @train="prepareZoneExperiment" />
+                </section>
               </template>
             </details>
 
-            <details ref="replayExperimentSettings" class="surface result-details" :open="!experiment">
+            <details ref="replayExperimentSettings" v-show="expertMode" class="surface result-details" :open="!experiment">
               <summary>算法选用与实验设置</summary>
               <div class="p-5 space-y-4">
                 <div class="flex gap-3 flex-wrap items-center">
@@ -1080,33 +1205,40 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
                 <p class="hint">回放要在 5 分钟内显示多个算法预测点时，可按数据采样频率选择 1 分钟时距。采样较疏时，可选择 5 分钟时距。</p>
                 <details class="border-top pt-3">
                   <summary class="cursor-pointer text-xs font-semibold">高级设置</summary>
-                  <div class="form-grid four mt-4">
-                    <label>历史窗口 / min<input v-model.number="config.historyMinutes" type="number" min="5" max="240" class="control" /></label>
-                    <label>岭回归 α<input v-model.number="config.ridgeAlpha" type="number" min="0.001" max="10000" step="0.1" class="control" /></label>
-                    <label>提升树轮数<input v-model.number="config.boostingRounds" type="number" min="5" max="120" class="control" /></label>
-                    <label>提升学习率<input v-model.number="config.learningRate" type="number" min="0.01" max="0.5" step="0.01" class="control" /></label>
+                  <div class="slider-grid mt-4">
+                    <div class="slider-field">
+                      <div class="slider-head"><span>历史窗口</span><b>{{ config.historyMinutes }} min</b></div>
+                      <input v-model.number="config.historyMinutes" type="range" min="5" max="240" step="1" />
+                      <p class="slider-note">每次预测参考之前多少分钟的历史记录</p>
+                    </div>
+                    <div class="slider-field">
+                      <div class="slider-head"><span>岭回归 α（对数刻度）</span><b>{{ config.ridgeAlpha }}</b></div>
+                      <input v-model="ridgeAlphaSlider" type="range" min="0" max="100" step="0.1" />
+                      <p class="slider-note">正则强度：数值越大越抑制过拟合，实际范围 0.001–10000</p>
+                    </div>
+                    <div class="slider-field">
+                      <div class="slider-head"><span>提升树轮数</span><b>{{ config.boostingRounds }}</b></div>
+                      <input v-model.number="config.boostingRounds" type="range" min="5" max="120" step="1" />
+                      <p class="slider-note">树的数量：越多拟合能力越强，但过多会变慢</p>
+                    </div>
+                    <div class="slider-field">
+                      <div class="slider-head"><span>提升学习率</span><b>{{ config.learningRate }}</b></div>
+                      <input v-model.number="config.learningRate" type="range" min="0.01" max="0.5" step="0.01" />
+                      <p class="slider-note">每一步的更新幅度：较大收敛快，较小更平稳</p>
+                    </div>
                   </div>
-                  <div class="flex flex-wrap items-center gap-4 mt-3">
-                    <label class="check-line"><input v-model="config.calibrate" type="checkbox" />仅用训练集重新标定机理参数</label>
-                    <label v-for="key in (['capacityKJ', 'lossKW', 'tauMinutes'] as const)" :key="key" class="check-line">
-                      <input v-model="config.lockedParameters" type="checkbox" :value="key" />锁定{{ state?.parameterDefinitions.find(p => p.key === key)?.label }}
-                    </label>
+                  <div class="flex flex-wrap items-center justify-between gap-3 mt-3">
+                    <button type="button" class="btn tiny" @click="resetExperimentConfig"><RotateCcw :size="12" />恢复默认参数</button>
+                    <div class="flex flex-wrap items-center gap-4">
+                      <label class="check-line"><input v-model="config.calibrate" type="checkbox" />仅用训练集重新标定机理参数</label>
+                      <label v-for="key in (['capacityKJ', 'lossKW', 'tauMinutes'] as const)" :key="key" class="check-line">
+                        <input v-model="config.lockedParameters" type="checkbox" :value="key" />锁定{{ state?.parameterDefinitions.find(p => p.key === key)?.label }}
+                      </label>
+                    </div>
                   </div>
                 </details>
               </div>
             </details>
-            <KilnAlgorithmResults
-              v-if="comparisonAlgorithms.length"
-              :library="comparisonAlgorithms"
-              :experiment="experimentCurrent ? experiment : undefined"
-              :split="chartSplit"
-              :comparison="comparison"
-              :selected="experimentCurrent && selections[config.task]?.experimentId === experiment?.id ? selections[config.task]?.algorithm : undefined"
-              :pending="pendingAlgorithm"
-              :advice="advice?.algorithmCards"
-              :can-select="experimentValid && !running"
-              @select="selectAlgorithm"
-            />
             <div v-if="selectedCount" class="p-4">
               <button type="button" class="btn primary" @click="step = 'bundle'">确认模型组合<ArrowRight :size="13" /></button>
             </div>
@@ -1130,8 +1262,10 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
           </template>
         </main>
 
-        <aside v-if="step !== 'bundle' && !replayVisible" ref="mechanismDetailsPanel" class="right-panel surface">
-          <div class="section-head"><span><Settings2 :size="14" class="inline mr-2" />{{ step === 'mechanism' ? '机理参数与依据' : '建模依据与选型' }}</span></div>
+        <aside v-if="showRightPanel" ref="mechanismDetailsPanel" class="right-panel surface">
+          <div class="section-head"><span><Settings2 :size="14" class="inline mr-2" />{{ step === 'mechanism' ? '机理参数与依据' : '建模依据与选型' }}</span>
+            <button v-if="focusMode" type="button" class="panel-close" aria-label="收起侧栏" @click="rightPanelOpen = false"><X :size="13" /></button>
+          </div>
           <div v-if="step === 'mechanism'" class="p-4 space-y-4">
             <template v-if="currentTemplate">
               <div>
@@ -1204,6 +1338,10 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
 </template>
 
 <style scoped>
+.conclusion-card { border-top:3px solid #3f8c7e; font-size:13px; }
+.conclusion-card>h2 { padding:14px 16px 0; font-size:16px; font-weight:650; }
+.conclusion-card h3 { font-size:18px; font-weight:650; }
+.conclusion-card h4 { font-size:12px; font-weight:650; }
 .result-details>summary { cursor:pointer; padding:12px 16px; font-weight:600; }
 .advice-options { display:flex; flex-wrap:wrap; gap:12px; }
 .advice-options>div { flex:1 1 120px; display:grid; gap:5px; padding:10px 12px; background:var(--muted); border:1px solid var(--border); border-radius:6px; }
@@ -1225,10 +1363,19 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
 .scope-grid summary { color:var(--muted-foreground); font-size:11px; cursor:pointer; }
 @media(max-width:1000px) { .scope-grid { grid-template-columns:1fr; } }
 .workspace.forecast-layout { grid-template-columns: minmax(0, 1fr); }
-.studio { font-size:12px; }.studio h2 { font-size:14px; font-weight:600; }.studio h3 { font-size:13px; font-weight:600; }.studio h4 { font-size:12px; font-weight:600; }.btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid var(--border); border-radius:6px; padding:8px 12px; font-size:11px; background:var(--card); color:var(--foreground); cursor:pointer; line-height:1.4; }.btn:hover { background:var(--muted); }.btn.primary { background:#266e6b; border-color:#266e6b; color:#fff; }.btn.primary:hover { background:#215c5b; }.btn:disabled { opacity:.45; cursor:not-allowed; }.btn.tiny { padding:5px 9px; font-size:10px; }.control { border:1px solid var(--border); background:var(--background); border-radius:5px; padding:8px 9px; color:var(--foreground); min-width:0; font-size:11px; }.control:focus { outline:2px solid #4a928b66; border-color:#568e88; }label { font-size:11px; }label>.control { display:block; margin-top:6px; width:100%; }input[type=checkbox] { accent-color:#317e75; flex-shrink:0; }input[type=range] { accent-color:#317e75; width:100%; margin-top:13px; }.check-line { display:flex; align-items:center; gap:8px; line-height:1.6; }.hint { color:var(--muted-foreground); font-size:11px; line-height:1.8; }.mono { font-family:Consolas,monospace; }.badge { display:inline-flex; align-items:center; border:1px solid var(--border); color:var(--muted-foreground); background:var(--muted); font-size:10px; padding:3px 6px; border-radius:4px; line-height:1.4; }.surface { background:var(--card); border:1px solid var(--border); border-radius:8px; overflow:hidden; }.section-head { padding:14px 17px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:12px; font-weight:500; }.section-head p { font-size:10px; color:var(--muted-foreground); margin-top:5px; font-weight:400; }.section-head small { color:var(--muted-foreground); font-size:10px; }.border-top { border-top:1px solid var(--border); }.feedback { padding:10px 14px; border:1px solid var(--border); border-radius:6px; display:flex; justify-content:space-between; gap:12px; font-size:12px; line-height:1.7; }.feedback.error { background:#a6423410; color:#bf675b; }.feedback.success { background:#2f887312; color:#4b9f8a; }.warning-note { border-left:2px solid #c49554; color:var(--muted-foreground); background:#c495540c; padding:9px 12px; font-size:11px; line-height:1.7; }.warning { color:#c49554; }.project-bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 16px; border:1px solid var(--border); border-radius:7px; background:var(--card); }.project-select { background:transparent; border:none; font-size:12px; max-width:360px; min-width:180px; color:var(--foreground); }.project-select option { background:var(--card); }.step-nav { display:flex; border:1px solid var(--border); border-radius:7px; background:var(--card); overflow:auto; }.step-nav>button { display:flex; align-items:center; gap:9px; flex:1; text-align:left; min-width:140px; padding:14px 12px; position:relative; color:var(--muted-foreground); border-bottom:2px solid transparent; cursor:pointer; }.step-nav>button.active { border-bottom-color:#448d85; color:var(--foreground); background:#3a897d0c; }.step-number { width:23px; height:23px; border:1px solid var(--border); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; }.active .step-number { background:#2c746b; color:white; border-color:#2c746b; }.step-nav strong { display:block; font-size:11px; font-weight:500; }.step-nav small { display:block; font-size:9px; margin-top:3px; color:var(--muted-foreground); }.step-chevron { margin-left:auto; color:var(--muted-foreground); flex-shrink:0; }.job-bar { display:flex; align-items:center; gap:10px; background:#3a897d0a; border:1px solid var(--border); padding:11px 14px; border-radius:6px; font-size:11px; }.job-bar span { flex:1; }.job-track { width:100px; height:4px; background:var(--muted); border-radius:3px; overflow:hidden; }.job-track i { display:block; height:100%; background:#4a9988; }.job-bar.failed { color:#be6e61; }.workspace { display:grid; grid-template-columns:210px minmax(0,1fr) 285px; gap:16px; align-items:start; }.left-panel,.right-panel { position:sticky; top:12px; }.file-list { max-height:360px; overflow:auto; }.file-list>button { display:flex; text-align:left; align-items:flex-start; gap:8px; width:100%; padding:12px; border-bottom:1px solid var(--border); cursor:pointer; }.file-list>button.selected { background:#3a897d12; }.file-list>button>svg { margin-top:2px; flex-shrink:0; color:var(--muted-foreground); }.file-list strong { display:block; word-break:break-all; font-size:10px; font-weight:500; line-height:1.7; }.file-list small { display:block; color:var(--muted-foreground); margin-top:4px; font-size:9px; }.dot { height:5px; width:5px; border-radius:50%; background:#9b927a; flex-shrink:0; margin:7px 0 0 auto; }.dot.ready { background:#529d83; }.dot.failed { background:#be6e61; }.dataset-meta { display:flex; flex-direction:column; gap:7px; color:var(--muted-foreground); font-size:10px; margin-top:12px; }.sidebar-action { width:100%; display:flex; gap:9px; align-items:center; padding:13px; border-top:1px solid var(--border); font-size:11px; cursor:pointer; }.sidebar-action span { flex:1; text-align:left; }.sidebar-note { display:flex; gap:8px; padding:14px; border-top:1px solid var(--border); color:var(--muted-foreground); background:var(--muted); }.sidebar-note svg { flex-shrink:0; margin-top:2px; }.sidebar-note p { font-size:10px; line-height:1.8; }.center-panel { display:flex; flex-direction:column; gap:16px; }.right-panel { max-height:calc(100vh - 30px); overflow:auto; }.loading { display:flex; align-items:center; justify-content:center; gap:12px; min-height:300px; color:var(--muted-foreground); }.welcome { text-align:center; padding:55px 24px; border:1px dashed var(--border); border-radius:9px; background:var(--card); }.welcome-icon { display:flex; justify-content:center; color:#59998f; margin-bottom:20px; }.eyebrow { font-size:10px; letter-spacing:2px; color:var(--muted-foreground); margin-bottom:14px; }.welcome h2 { font-size:23px; font-weight:500; }.welcome>p:not(.eyebrow) { color:var(--muted-foreground); font-size:12px; line-height:1.9; max-width:630px; margin:16px auto 0; }.welcome>small { display:block; font-size:10px; color:var(--muted-foreground); margin-top:24px; }.intro-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:28px; padding:15px 4px; }.intro-grid span { color:#64998e; font-size:10px; }.intro-grid h3 { margin:12px 0 8px; }.intro-grid p { color:var(--muted-foreground); line-height:1.8; font-size:11px; }.source-list { max-height:650px; overflow:auto; display:flex; flex-direction:column; gap:12px; }.source-list button { padding:13px; text-align:left; border:1px solid var(--border); border-radius:5px; }.source-list button:hover { background:var(--muted); }.source-list small { font-size:10px; color:#59998f; }.source-list p { margin-top:7px; white-space:pre-wrap; font-size:12px; line-height:1.9; }.empty-inline { padding:20px 0; color:var(--muted-foreground); line-height:1.8; }.table-wrap { overflow:auto; }table { border-collapse:collapse; width:100%; font-size:11px; }th { font-weight:500; text-align:left; background:var(--muted); color:var(--muted-foreground); padding:10px; white-space:nowrap; }td { padding:9px 10px; border-bottom:1px solid var(--border); line-height:1.6; }td small { font-size:9px; }.mapping-select { min-width:150px; }.small-number { width:68px; }.form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }.form-grid.four { grid-template-columns:repeat(4,minmax(0,1fr)); }.form-grid label { display:flex; flex-direction:column; gap:4px; color:var(--muted-foreground); font-size:10px; }.span-2 { grid-column:span 2; }.quality-row { margin-top:16px; padding-bottom:14px; border-bottom:1px solid var(--border); }.quality-row p { color:var(--muted-foreground); font-size:10px; margin-top:6px; }.interpretation { margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }.interpretation>p { margin-top:12px; line-height:1.9; }.citation { display:block; width:100%; text-align:left; padding:9px 10px; border:1px solid var(--border); background:var(--muted); border-radius:5px; font-size:10px; margin-top:9px; overflow-wrap:anywhere; cursor:pointer; }.citation:hover { border-color:#538e84; }.citation small { display:block; color:var(--muted-foreground); line-height:1.7; margin-top:5px; }.mechanism-list article { padding:17px 20px; border-bottom:1px solid var(--border); }.mechanism-list article:last-child { border-bottom:none; }.mechanism-list article.selected { background:#3a897d08; }.mechanism-list label { display:flex; align-items:flex-start; gap:10px; }.mechanism-list label>input { margin-top:4px; }.mechanism-list button { display:flex; flex-direction:column; gap:5px; text-align:left; cursor:pointer; }.mechanism-list small { color:var(--muted-foreground); font-size:10px; }.mechanism-list p { font-size:11px; color:var(--muted-foreground); line-height:1.8; margin:10px 0; }.formula { font-family:Consolas,'Microsoft YaHei',monospace; font-size:11px; line-height:1.9; padding:9px 11px; border:1px solid var(--border); background:var(--muted); border-radius:5px; overflow-wrap:anywhere; }.parameter-field { display:flex; flex-direction:column; gap:5px; margin-bottom:17px; }.parameter-field>span { display:flex; justify-content:space-between; align-items:center; font-size:11px; }.parameter-field>span small { color:var(--muted-foreground); font-size:10px; }.parameter-source { color:#679f94; font-size:9px; text-align:left; }.parameter-field>.hint { font-size:9px; }.task-tabs { display:flex; border-bottom:1px solid var(--border); padding:0 10px; }.task-tabs button { display:flex; align-items:center; justify-content:center; gap:9px; flex:1; padding:16px 8px; color:var(--muted-foreground); border-bottom:2px solid transparent; cursor:pointer; font-size:12px; }.task-tabs button.active { color:#59998f; border-bottom-color:#59998f; }.segmented { display:flex; border:1px solid var(--border); border-radius:4px; padding:2px; }.segmented button { font-size:10px; color:var(--muted-foreground); padding:5px 7px; cursor:pointer; }.segmented button.active { background:var(--muted); color:var(--foreground); }.split-summary { display:grid; grid-template-columns:repeat(3,1fr); border:1px solid var(--border); border-radius:7px; background:var(--card); }.split-summary article { padding:15px; border-right:1px solid var(--border); }.split-summary article:last-child { border:none; }.split-summary span { font-size:10px; color:var(--muted-foreground); }.split-summary strong { display:block; margin-top:8px; font-size:18px; font-weight:500; }.split-summary small { font-size:9px; font-weight:400; color:var(--muted-foreground); }.split-summary p { font-size:9px; line-height:1.8; color:var(--muted-foreground); margin-top:7px; }.selected-task { margin-bottom:14px; }.selected-task>span { color:#679f94; font-size:10px; }.selected-task>p { font-size:10px; color:var(--muted-foreground); line-height:1.8; margin-top:5px; }.talk-points { padding-left:16px; margin-top:10px; list-style:decimal; color:var(--muted-foreground); font-size:10px; line-height:2.2; }.selection-list { margin:18px 0; }.selection-list article { display:flex; align-items:center; gap:14px; padding:14px 0; border-bottom:1px solid var(--border); }.selection-list article>span { font-size:11px; color:var(--muted-foreground); min-width:80px; }.selection-list article>strong { font-size:11px; font-weight:400; flex:1; }.manifest-row { padding:17px 0; border-bottom:1px solid var(--border); }.manifest-row p { font-size:11px; color:var(--muted-foreground); margin-top:7px; }.manifest-row small { display:block; color:var(--muted-foreground); font-size:9px; margin-top:8px; }.simulation-row { display:flex; justify-content:space-between; gap:20px; padding:18px 0; border-bottom:1px solid var(--border); }.simulation-row strong { font-size:11px; }.simulation-row p { font-size:10px; color:var(--muted-foreground); margin-top:6px; line-height:1.7; }.simulation-values { display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:flex-end; font-size:10px; min-width:160px; }.simulation-values b { display:block; margin-top:4px; font-size:19px; font-weight:500; }.simulation-values small { width:100%; color:var(--muted-foreground); text-align:right; font-size:9px; }.knowledge-intro { display:grid; grid-template-columns:1fr 1fr; gap:25px; margin-top:20px; padding-top:17px; border-top:1px solid var(--border); }.knowledge-intro strong { font-size:11px; }.knowledge-intro p { font-size:11px; line-height:1.8; color:var(--muted-foreground); margin-top:8px; }.studio-footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; color:var(--muted-foreground); font-size:10px; padding:14px 0; }.modal-backdrop { position:fixed; inset:0; background:#0008; z-index:70; display:flex; justify-content:center; align-items:center; padding:24px; }.source-modal { width:720px; max-width:100%; max-height:85vh; overflow:auto; border:1px solid var(--border); border-radius:9px; background:var(--card); color:var(--foreground); }.source-modal pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:22px; font:12px/2 'Microsoft YaHei',sans-serif; }.guide-modal article p { font-size:12px; color:var(--muted-foreground); line-height:1.9; margin-top:9px; }
+.workspace.panels-both { grid-template-columns:210px minmax(0,1fr) 285px; }
+.workspace.panels-left { grid-template-columns:210px minmax(0,1fr); }
+.workspace.panels-right { grid-template-columns:minmax(0,1fr) 285px; }
+.focus-toolbar { display:flex; gap:8px; flex-wrap:wrap; }
+.focus-toggle { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); background:var(--card); color:var(--muted-foreground); border-radius:6px; padding:6px 10px; font-size:11px; cursor:pointer; }
+.focus-toggle[aria-expanded="true"] { border-color:#448d85; color:#448d85; }
+.head-actions { display:inline-flex; align-items:center; gap:8px; }
+.panel-close { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:5px; padding:3px; color:var(--muted-foreground); cursor:pointer; }
+.panel-close:hover { color:var(--foreground); background:var(--muted); }
+.studio { font-size:12px; }.studio h2 { font-size:14px; font-weight:600; }.studio h3 { font-size:13px; font-weight:600; }.studio h4 { font-size:12px; font-weight:600; }.btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid var(--border); border-radius:6px; padding:8px 12px; font-size:11px; background:var(--card); color:var(--foreground); cursor:pointer; line-height:1.4; }.btn:hover { background:var(--muted); }.btn.primary { background:#266e6b; border-color:#266e6b; color:#fff; }.btn.primary:hover { background:#215c5b; }.btn:disabled { opacity:.45; cursor:not-allowed; }.btn.tiny { padding:5px 9px; font-size:10px; }.control { border:1px solid var(--border); background:var(--background); border-radius:5px; padding:8px 9px; color:var(--foreground); min-width:0; font-size:11px; }.control:focus { outline:2px solid #4a928b66; border-color:#568e88; }label { font-size:11px; }label>.control { display:block; margin-top:6px; width:100%; }input[type=checkbox] { accent-color:#317e75; flex-shrink:0; }input[type=range] { accent-color:#317e75; width:100%; margin-top:13px; }.check-line { display:flex; align-items:center; gap:8px; line-height:1.6; }.hint { color:var(--muted-foreground); font-size:11px; line-height:1.8; }.mono { font-family:Consolas,monospace; }.badge { display:inline-flex; align-items:center; border:1px solid var(--border); color:var(--muted-foreground); background:var(--muted); font-size:10px; padding:3px 6px; border-radius:4px; line-height:1.4; }.surface { background:var(--card); border:1px solid var(--border); border-radius:8px; overflow:hidden; }.section-head { padding:14px 17px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:12px; font-weight:500; }.section-head p { font-size:10px; color:var(--muted-foreground); margin-top:5px; font-weight:400; }.section-head small { color:var(--muted-foreground); font-size:10px; }.border-top { border-top:1px solid var(--border); }.feedback { padding:10px 14px; border:1px solid var(--border); border-radius:6px; display:flex; justify-content:space-between; gap:12px; font-size:12px; line-height:1.7; }.feedback.error { background:#a6423410; color:#bf675b; }.feedback.success { background:#2f887312; color:#4b9f8a; }.warning-note { border-left:2px solid #c49554; color:var(--muted-foreground); background:#c495540c; padding:9px 12px; font-size:11px; line-height:1.7; }.warning { color:#c49554; }.project-bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 16px; border:1px solid var(--border); border-radius:7px; background:var(--card); }.project-select { background:transparent; border:none; font-size:12px; max-width:360px; min-width:180px; color:var(--foreground); }.project-select option { background:var(--card); }.step-nav { display:flex; border:1px solid var(--border); border-radius:7px; background:var(--card); overflow:auto; }.step-nav>button { display:flex; align-items:center; gap:9px; flex:1; text-align:left; min-width:140px; padding:14px 12px; position:relative; color:var(--muted-foreground); border-bottom:2px solid transparent; cursor:pointer; }.step-nav>button.active { border-bottom-color:#448d85; color:var(--foreground); background:#3a897d0c; }.step-number { width:23px; height:23px; border:1px solid var(--border); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; }.active .step-number { background:#2c746b; color:white; border-color:#2c746b; }.step-nav strong { display:block; font-size:11px; font-weight:500; }.step-nav small { display:block; font-size:9px; margin-top:3px; color:var(--muted-foreground); }.step-chevron { margin-left:auto; color:var(--muted-foreground); flex-shrink:0; }.job-bar { display:flex; align-items:center; gap:10px; background:#3a897d0a; border:1px solid var(--border); padding:11px 14px; border-radius:6px; font-size:11px; }.job-bar span { flex:1; }.job-track { width:100px; height:4px; background:var(--muted); border-radius:3px; overflow:hidden; }.job-track i { display:block; height:100%; background:#4a9988; }.job-bar.failed { color:#be6e61; }.workspace { display:grid; grid-template-columns:210px minmax(0,1fr) 285px; gap:16px; align-items:start; }.left-panel,.right-panel { position:sticky; top:12px; }.file-list { max-height:360px; overflow:auto; }.file-list>button { display:flex; text-align:left; align-items:flex-start; gap:8px; width:100%; padding:12px; border-bottom:1px solid var(--border); cursor:pointer; }.file-list>button.selected { background:#3a897d12; }.file-list>button>svg { margin-top:2px; flex-shrink:0; color:var(--muted-foreground); }.file-list strong { display:block; word-break:break-all; font-size:10px; font-weight:500; line-height:1.7; }.file-list small { display:block; color:var(--muted-foreground); margin-top:4px; font-size:9px; }.dot { height:5px; width:5px; border-radius:50%; background:#9b927a; flex-shrink:0; margin:7px 0 0 auto; }.dot.ready { background:#529d83; }.dot.failed { background:#be6e61; }.dataset-meta { display:flex; flex-direction:column; gap:7px; color:var(--muted-foreground); font-size:10px; margin-top:12px; }.sidebar-action { width:100%; display:flex; gap:9px; align-items:center; padding:13px; border-top:1px solid var(--border); font-size:11px; cursor:pointer; }.sidebar-action span { flex:1; text-align:left; }.sidebar-note { display:flex; gap:8px; padding:14px; border-top:1px solid var(--border); color:var(--muted-foreground); background:var(--muted); }.sidebar-note svg { flex-shrink:0; margin-top:2px; }.sidebar-note p { font-size:10px; line-height:1.8; }.center-panel { display:flex; flex-direction:column; gap:16px; }.right-panel { max-height:calc(100vh - 30px); overflow:auto; }.loading { display:flex; align-items:center; justify-content:center; gap:12px; min-height:300px; color:var(--muted-foreground); }.welcome { text-align:center; padding:55px 24px; border:1px dashed var(--border); border-radius:9px; background:var(--card); }.welcome-icon { display:flex; justify-content:center; color:#59998f; margin-bottom:20px; }.eyebrow { font-size:10px; letter-spacing:2px; color:var(--muted-foreground); margin-bottom:14px; }.welcome h2 { font-size:23px; font-weight:500; }.welcome>p:not(.eyebrow) { color:var(--muted-foreground); font-size:12px; line-height:1.9; max-width:630px; margin:16px auto 0; }.welcome>small { display:block; font-size:10px; color:var(--muted-foreground); margin-top:24px; }.intro-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:28px; padding:15px 4px; }.intro-grid span { color:#64998e; font-size:10px; }.intro-grid h3 { margin:12px 0 8px; }.intro-grid p { color:var(--muted-foreground); line-height:1.8; font-size:11px; }.source-list { max-height:650px; overflow:auto; display:flex; flex-direction:column; gap:12px; }.source-list button { padding:13px; text-align:left; border:1px solid var(--border); border-radius:5px; }.source-list button:hover { background:var(--muted); }.source-list small { font-size:10px; color:#59998f; }.source-list p { margin-top:7px; white-space:pre-wrap; font-size:12px; line-height:1.9; }.empty-inline { padding:20px 0; color:var(--muted-foreground); line-height:1.8; }.table-wrap { overflow:auto; }table { border-collapse:collapse; width:100%; font-size:11px; }th { font-weight:500; text-align:left; background:var(--muted); color:var(--muted-foreground); padding:10px; white-space:nowrap; }td { padding:9px 10px; border-bottom:1px solid var(--border); line-height:1.6; }td small { font-size:9px; }.mapping-select { min-width:150px; }.small-number { width:68px; }.form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }.form-grid.four { grid-template-columns:repeat(4,minmax(0,1fr)); }.slider-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 18px; }.slider-field { display:flex; flex-direction:column; min-width:0; }.slider-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:11px; color:var(--muted-foreground); }.slider-head b { font-size:13px; color:var(--foreground); font-weight:650; white-space:nowrap; }.slider-field input[type=range] { margin-top:8px; }.slider-note { margin:5px 0 0; font-size:10px; line-height:1.5; color:var(--muted-foreground); }.form-grid label { display:flex; flex-direction:column; gap:4px; color:var(--muted-foreground); font-size:10px; }.span-2 { grid-column:span 2; }.quality-row { margin-top:16px; padding-bottom:14px; border-bottom:1px solid var(--border); }.quality-row p { color:var(--muted-foreground); font-size:10px; margin-top:6px; }.interpretation { margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }.interpretation>p { margin-top:12px; line-height:1.9; }.citation { display:block; width:100%; text-align:left; padding:9px 10px; border:1px solid var(--border); background:var(--muted); border-radius:5px; font-size:10px; margin-top:9px; overflow-wrap:anywhere; cursor:pointer; }.citation:hover { border-color:#538e84; }.citation small { display:block; color:var(--muted-foreground); line-height:1.7; margin-top:5px; }.mechanism-list article { padding:17px 20px; border-bottom:1px solid var(--border); }.mechanism-list article:last-child { border-bottom:none; }.mechanism-list article.selected { background:#3a897d08; }.mechanism-list label { display:flex; align-items:flex-start; gap:10px; }.mechanism-list label>input { margin-top:4px; }.mechanism-list button { display:flex; flex-direction:column; gap:5px; text-align:left; cursor:pointer; }.mechanism-list small { color:var(--muted-foreground); font-size:10px; }.mechanism-list p { font-size:11px; color:var(--muted-foreground); line-height:1.8; margin:10px 0; }.formula { font-family:Consolas,'Microsoft YaHei',monospace; font-size:11px; line-height:1.9; padding:9px 11px; border:1px solid var(--border); background:var(--muted); border-radius:5px; overflow-wrap:anywhere; }.parameter-field { display:flex; flex-direction:column; gap:5px; margin-bottom:17px; }.parameter-field>span { display:flex; justify-content:space-between; align-items:center; font-size:11px; }.parameter-field>span small { color:var(--muted-foreground); font-size:10px; }.parameter-source { color:#679f94; font-size:9px; text-align:left; }.parameter-field>.hint { font-size:9px; }.task-tabs { display:flex; border-bottom:1px solid var(--border); padding:0 10px; }.task-tabs button { display:flex; align-items:center; justify-content:center; gap:9px; flex:1; padding:16px 8px; color:var(--muted-foreground); border-bottom:2px solid transparent; cursor:pointer; font-size:12px; }.task-tabs button.active { color:#59998f; border-bottom-color:#59998f; }.segmented { display:flex; border:1px solid var(--border); border-radius:4px; padding:2px; }.segmented button { font-size:10px; color:var(--muted-foreground); padding:5px 7px; cursor:pointer; }.segmented button.active { background:var(--muted); color:var(--foreground); }.split-summary { display:grid; grid-template-columns:repeat(3,1fr); border:1px solid var(--border); border-radius:7px; background:var(--card); }.split-summary article { padding:15px; border-right:1px solid var(--border); }.split-summary article:last-child { border:none; }.split-summary span { font-size:10px; color:var(--muted-foreground); }.split-summary strong { display:block; margin-top:8px; font-size:18px; font-weight:500; }.split-summary small { font-size:9px; font-weight:400; color:var(--muted-foreground); }.split-summary p { font-size:9px; line-height:1.8; color:var(--muted-foreground); margin-top:7px; }.selected-task { margin-bottom:14px; }.selected-task>span { color:#679f94; font-size:10px; }.selected-task>p { font-size:10px; color:var(--muted-foreground); line-height:1.8; margin-top:5px; }.talk-points { padding-left:16px; margin-top:10px; list-style:decimal; color:var(--muted-foreground); font-size:10px; line-height:2.2; }.selection-list { margin:18px 0; }.selection-list article { display:flex; align-items:center; gap:14px; padding:14px 0; border-bottom:1px solid var(--border); }.selection-list article>span { font-size:11px; color:var(--muted-foreground); min-width:80px; }.selection-list article>strong { font-size:11px; font-weight:400; flex:1; }.manifest-row { padding:17px 0; border-bottom:1px solid var(--border); }.manifest-row p { font-size:11px; color:var(--muted-foreground); margin-top:7px; }.manifest-row small { display:block; color:var(--muted-foreground); font-size:9px; margin-top:8px; }.simulation-row { display:flex; justify-content:space-between; gap:20px; padding:18px 0; border-bottom:1px solid var(--border); }.simulation-row strong { font-size:11px; }.simulation-row p { font-size:10px; color:var(--muted-foreground); margin-top:6px; line-height:1.7; }.simulation-values { display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:flex-end; font-size:10px; min-width:160px; }.simulation-values b { display:block; margin-top:4px; font-size:19px; font-weight:500; }.simulation-values small { width:100%; color:var(--muted-foreground); text-align:right; font-size:9px; }.knowledge-intro { display:grid; grid-template-columns:1fr 1fr; gap:25px; margin-top:20px; padding-top:17px; border-top:1px solid var(--border); }.knowledge-intro strong { font-size:11px; }.knowledge-intro p { font-size:11px; line-height:1.8; color:var(--muted-foreground); margin-top:8px; }.studio-footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; color:var(--muted-foreground); font-size:10px; padding:14px 0; }.modal-backdrop { position:fixed; inset:0; background:#0008; z-index:70; display:flex; justify-content:center; align-items:center; padding:24px; }.source-modal { width:720px; max-width:100%; max-height:85vh; overflow:auto; border:1px solid var(--border); border-radius:9px; background:var(--card); color:var(--foreground); }.source-modal pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:22px; font:12px/2 'Microsoft YaHei',sans-serif; }.guide-modal article p { font-size:12px; color:var(--muted-foreground); line-height:1.9; margin-top:9px; }
 @media(min-width:1600px) { .workspace { grid-template-columns:235px minmax(0,1fr) 310px; } }
 @media(max-width:1200px) { .workspace { grid-template-columns:185px minmax(0,1fr); }.right-panel { grid-column:1/-1; position:static; max-height:none; }.right-panel>div.p-4 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }}
-@media(max-width:760px) { .workspace { grid-template-columns:1fr; }.left-panel { position:static; }.file-list { max-height:150px; }.right-panel>div.p-4 { display:block; }.intro-grid { grid-template-columns:1fr; }.form-grid,.form-grid.four { grid-template-columns:repeat(2,minmax(0,1fr)); }.welcome h2 { font-size:19px; }.project-select { max-width:230px; }.section-head { flex-wrap:wrap; }.simulation-row { flex-direction:column; }.simulation-values { justify-content:flex-start; }.simulation-values small { text-align:left; } }
+@media(max-width:760px) { .workspace { grid-template-columns:1fr; }.left-panel { position:static; }.file-list { max-height:150px; }.right-panel>div.p-4 { display:block; }.intro-grid { grid-template-columns:1fr; }.form-grid,.form-grid.four { grid-template-columns:repeat(2,minmax(0,1fr)); }.slider-grid { grid-template-columns:1fr; }.welcome h2 { font-size:19px; }.project-select { max-width:230px; }.section-head { flex-wrap:wrap; }.simulation-row { flex-direction:column; }.simulation-values { justify-content:flex-start; }.simulation-values small { text-align:left; } }
 .catalog-card-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px 10px; margin-top:12px; padding-top:10px; border-top:1px solid var(--border); }
 .catalog-card-actions small { flex:1 1 130px; color:var(--muted-foreground); }
 .catalog-card-actions .recommended { color:#28756d; font-weight:600; }
