@@ -12,6 +12,7 @@ const props = defineProps<{
   mappingDraft?: MappingDraft
   unexpandedZipCount: number
   disabled: boolean
+  saving?: boolean
 }>()
 const kilnCode = defineModel<string>('kilnCode', { required: true })
 const zoneCount = defineModel<number>('zoneCount', { required: true })
@@ -99,7 +100,7 @@ function time(value: string) { return value.replace('T', ' ').slice(0, 16) }
     <section class="surface files">
       <header class="section-head">
         <div><h2>工况文件</h2><p>已选 {{ selectedFiles.length }} / {{ files.length }} 份 · {{ fmt(selectedRows, 0) }} 行<span v-if="reviewCount"> · {{ reviewCount }} 份待核对</span></p></div>
-        <div class="actions"><button type="button" class="btn" :disabled="disabled || project.status !== 'parsed'" @click="emit('interpret')"><Sparkles :size="13" />AI 识别测点</button><button type="button" class="btn primary" :disabled="!canConfirm" @click="emit('confirm')"><Check :size="14" />确认并保存数据版本</button></div>
+        <div class="actions"><button type="button" class="btn" :disabled="disabled || project.status !== 'parsed'" @click="emit('interpret')"><Sparkles :size="13" />AI 识别测点</button><button type="button" class="btn primary" :disabled="!canConfirm" :aria-busy="saving" @click="emit('confirm')"><Check :size="14" />{{ saving ? '正在保存…' : '确认并保存数据版本' }}</button></div>
       </header>
       <p class="hint file-intro">每份勾选文件作为一个独立窑次。列表每页 {{ pageSize }} 份，保存包含所有页面中勾选的文件。</p>
       <p v-if="!flowConfirmed || !acknowledge || !selectedFiles.length" class="hint pending-hint">待完成：{{ [!flowConfirmed && '确认流量口径', !acknowledge && '核对设备与资料', !selectedFiles.length && '勾选工况文件'].filter(Boolean).join('、') }}。</p>

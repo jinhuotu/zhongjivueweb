@@ -8,7 +8,7 @@ import VChart from 'vue-echarts'
 import { ensureEcharts } from '@/components/ui-kit/charts/register'
 import { tooltipBase, useChartPalette } from '@/components/ui-kit/charts/theme'
 import { formatKilnChartValue, formatKilnNumber, formatKilnReading as reading, KILN_PARAMETER_DIGITS, kilnReadingDigits } from '@/lib/kiln-studio-format'
-import { replayDeviations, replayFuelVolume } from '@/lib/kiln-replay-comparison'
+import { replayAlgorithmFuelVolume, replayDeviations, replayFuelVolume } from '@/lib/kiln-replay-comparison'
 import { hasMinuteForecast } from '@/lib/kiln-studio-state'
 import type { AlgorithmKey, CatalogVersion, DashboardLayout, Dataset, Experiment, Mechanism, Parameters, ReplayExcludedRange, ReplayFrame, ReplayHorizon, ReplayPackage, ReplayRequest, StudioState, Template } from '@/lib/kiln-studio-api'
 
@@ -35,6 +35,7 @@ const cycles = computed(() => props.dataset.summary.filter(item => !cutoff.value
 const availableAlgorithms = computed(() => props.experiment.algorithms.filter(item => item.available))
 const algorithms = computed(() => availableAlgorithms.value.filter(item => item.key !== 'physics'))
 const isTemperature = computed(() => props.experiment.config.task === 'temperature')
+const isMinuteTask = computed(() => ['temperature', 'energy'].includes(props.experiment.config.task))
 const minuteAlgorithms = computed(() => algorithms.value.filter(item =>
   item.key === 'baseline' || hasMinuteForecast(item, props.experiment.config.horizonMinutes) ||
   props.experiment.config.horizonMinutes === 1,
@@ -67,7 +68,8 @@ const requestedAlgorithms = computed(() => props.dashboardLayout
 const horizon = ref<ReplayHorizon>(30)
 const windowMinutes = computed(() => props.dashboardLayout?.windowMinutes ?? horizon.value)
 const horizons = [5, 30, 60] as const
-const requestedHorizon = computed(() => props.dashboardLayout ? 30 : horizon.value)
+// The gas summary includes a 60-minute volume even when the chart shows 5/10/30 minutes.
+const requestedHorizon = computed<ReplayHorizon>(() => props.experiment.config.task === 'energy' ? 60 : props.dashboardLayout ? 30 : horizon.value)
 const timelineId = useId()
 const frameStep = ref(props.replay?.request.frameStepMinutes ?? 5)
 const frameSteps = [1, 5, 10, 15, 30] as const
@@ -93,10 +95,10 @@ const frameCount = computed(() => props.replay?.frames.length ?? 0)
 const canPlay = computed(() => !needsReplay.value && frameCount.value > 1 && !props.busy)
 const algorithm = computed(() => props.replay?.algorithms.find(item => item.key === selected.value))
 const algorithmDefinition = computed(() => algorithms.value.find(item => item.key === selected.value))
-const trajectoryMethod = computed(() => algorithm.value?.temperatureTrajectory ??
+const trajectoryMethod = computed(() => algorithm.value?.forecastTrajectory ?? algorithm.value?.temperatureTrajectory ??
   (algorithmDefinition.value && minuteAlgorithms.value.includes(algorithmDefinition.value) ? undefined : 'fixedHorizon'))
 const trajectoryLabel = computed(() => {
-  if (!isTemperature.value) return '算法预测'
+  if (!isMinuteTask.value) return '算法预测'
   if (trajectoryMethod.value === 'persistence') return '持续值基线'
   if (trajectoryMethod.value === 'fixedHorizon') return '算法时距预测点'
   return '算法逐分钟预测'
@@ -122,8 +124,9 @@ const forecastSeries = computed(() => availableAlgorithms.value.flatMap((item, i
   return [{
     key: item.key, name: item.name, color: forecastColors[index % forecastColors.length],
     slots, count: slots.filter(point => point.value !== null).length,
-    fixed: model?.temperatureTrajectory === 'fixedHorizon' || (!isTemperature.value &&
-      props.experiment.config.horizonMinutes > 1 && !hasMinuteForecast(item, props.experiment.config.horizonMinutes)),
+    fixed: (model?.forecastTrajectory ?? model?.temperatureTrajectory) != null
+      ? (model?.forecastTrajectory ?? model?.temperatureTrajectory) === 'fixedHorizon'
+      : props.experiment.config.horizonMinutes > 1 && !hasMinuteForecast(item, props.experiment.config.horizonMinutes),
     nativeMinutes: model?.trainedHorizonMinutes ?? props.experiment.config.horizonMinutes,
   }]
 }))
@@ -156,7 +159,7 @@ const exclusionComparison = computed(() => {
 })
 const algorithmIssue = computed(() => {
   if (!algorithmDefinition.value) return '当前实验只有机理结果。可加入数据算法并重新回测。'
-  if (isTemperature.value) {
+  if (isMinuteTask.value) {
     if (trajectoryMethod.value === 'fixedHorizon') {
       return `此模型按 ${algorithm.value?.trainedHorizonMinutes ?? props.experiment.config.horizonMinutes} 分钟时距计算。要看窗口内每分钟的变化，请选择或训练逐分钟模型。`
     }
@@ -302,13 +305,13 @@ const fuelWindows = computed(() => {
   if (task.value !== 'energy' || !frame) return []
   const anchor = { minuteOffset: 0, value: originActual.value }
   const step = algorithm.value?.trainedHorizonMinutes ?? Infinity
-  const algorithmPoints = selected.value !== 'physics' && step <= 5
-    ? (frame.future[selected.value] ?? []).filter(point => point.value !== null)
+  const algorithmPoints = selected.value !== 'physics'
+    ? (frame.future[selected.value] ?? [])
     : []
   return horizons.map(minutes => ({
     minutes,
     actual: replayFuelVolume([anchor, ...frame.actualFuture], minutes, maxGap.value),
-    algorithm: replayFuelVolume([anchor, ...algorithmPoints], minutes, step),
+    algorithm: replayAlgorithmFuelVolume([anchor, ...algorithmPoints], minutes, step, trajectoryMethod.value),
     mechanism: replayFuelVolume([anchor, ...(frame.mechanismFuture ?? [])], minutes, 1),
   }))
 })
@@ -434,10 +437,10 @@ const option = computed<EChartsOption>(() => {
       }
     }
   } else if (shownForecast.value.length) {
-    const values = isTemperature.value ? forecastSlots.value : shownForecast.value
+    const values = isMinuteTask.value ? forecastSlots.value : shownForecast.value
     const points: PlotPoint[] = values.map(item => [origin + item.minuteOffset, item.value])
     const prediction = line('prediction', trajectoryLabel.value, points, '#2379d2', true)
-    if (isTemperature.value && trajectoryMethod.value === 'fixedHorizon') prediction.lineStyle = { opacity: 0 }
+    if (isMinuteTask.value && trajectoryMethod.value === 'fixedHorizon') prediction.lineStyle = { opacity: 0 }
     prediction.showSymbol = trajectoryMethod.value === 'fixedHorizon'
     prediction.symbol = 'circle'
     prediction.symbolSize = 7
@@ -554,8 +557,8 @@ const option = computed<EChartsOption>(() => {
         </p>
         <p v-if="trajectoryMethod === 'persistence'" class="availability">每分钟沿用预测起点的实测温度，作为温度变化的对照。</p>
         <p v-if="algorithmIssue" class="availability">{{ algorithmIssue }}
-          <button v-if="isTemperature && (trajectoryMethod === 'fixedHorizon' || !algorithmDefinition)" type="button" class="configure-link"
-            @click="emit('configure')">{{ dashboardLayout ? '训练 30 分钟逐点模型' : '打开逐分钟模型设置' }}</button>
+          <button v-if="isMinuteTask && (trajectoryMethod === 'fixedHorizon' || !algorithmDefinition)" type="button" class="configure-link"
+            @click="emit('configure')">{{ dashboardLayout ? '训练并启用 30 分钟逐点模型' : '打开逐分钟模型设置' }}</button>
           <button v-else-if="!dashboardLayout && !isTemperature" type="button" class="configure-link" @click="emit('configure')">打开实验设置</button>
         </p>
         <p v-if="mechanismIssue" class="availability">{{ mechanismIssue }}</p>
@@ -593,7 +596,7 @@ const option = computed<EChartsOption>(() => {
               <td>{{ deviationText(row.actual.complete && row.mechanism.complete ? row.mechanism.volume! - row.actual.volume! : null, 'Nm³') }}</td>
             </tr></tbody>
           </table></div>
-          <p>按流量点间梯形积分，起点用当时的实测流量。累计偏差需要两条曲线覆盖完整窗口。算法累计使用时距为 5 分钟或更短的模型。</p>
+          <p>按实际流量点间梯形积分，起点用当时的实测流量。逐分钟模型按分钟积分；其他模型仅累计间隔不超过 5 分钟的有效预测。实测与预测均覆盖完整窗口时显示偏差，预测点过于稀疏时请重新训练。</p>
         </section>
         </template>
       </div>

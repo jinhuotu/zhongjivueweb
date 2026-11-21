@@ -16,12 +16,20 @@ export function sameTemplateSelection(left: string[], right: string[]): boolean 
 
 export function sameExperimentConfig(left: ExperimentConfig, right: ExperimentConfig): boolean {
   return sameTemplateSelection(left.selectedAlgorithmKeys ?? [], right.selectedAlgorithmKeys ?? []) &&
+    stableOptions(left.algorithmOptions ?? {}) === stableOptions(right.algorithmOptions ?? {}) &&
     (Object.keys(left) as (keyof ExperimentConfig)[]).every(key =>
-      key === 'selectedAlgorithmKeys' || (key === 'lockedParameters'
+      key === 'selectedAlgorithmKeys' || key === 'algorithmOptions' || (key === 'lockedParameters'
       ? sameTemplateSelection(left.lockedParameters, right.lockedParameters)
       : key === 'excludeZeroTemperatureRecords' ? !!left[key] === !!right[key]
       : left[key] === right[key]),
   )
+}
+
+function stableOptions(value: unknown): string {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return JSON.stringify(Object.fromEntries(
+    Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, stableOptions(entry)]),
+  ))
+  return JSON.stringify(value)
 }
 
 export function externalAlgorithmIssue(item: AlgorithmMetadata, config: ExperimentConfig): string {

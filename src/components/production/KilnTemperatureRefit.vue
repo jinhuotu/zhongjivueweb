@@ -8,7 +8,10 @@ import type { AlgorithmMetadata, Bundle, Experiment, ExperimentConfig, Job } fro
 
 const props = defineProps<{ bundle: Bundle; experiment: Experiment; library: AlgorithmMetadata[] }>()
 const emit = defineEmits<{ updated: [bundle: Bundle, experiment: Experiment]; busy: [value: boolean] }>()
-const source = computed(() => props.bundle.manifest.find(item => item.task === 'temperature')!)
+const task = computed(() => props.experiment.config.task)
+const subject = computed(() => task.value === 'energy' ? '燃气' : '温度')
+const unit = computed(() => task.value === 'energy' ? 'Nm³/h' : '℃')
+const source = computed(() => props.bundle.manifest.find(item => item.task === task.value)!)
 const horizon = ref(10)
 const historyMinutes = ref(props.experiment.config.historyMinutes)
 const calibrateResponse = ref(!props.experiment.config.lockedParameters.includes('tauMinutes'))
@@ -35,6 +38,7 @@ const canTrainTrajectory = computed(() => canRun.value && trajectoryAlgorithms.v
 const candidates = computed(() => {
   const count = trained.value?.split.find(item => item.name === '验证')?.count ?? 0
   const usable = temperatureCandidates(trained.value?.algorithms ?? [], count)
+  if (task.value === 'energy') usable.sort((a, b) => a.validation!.rmse! - b.validation!.rmse! || a.validation!.mae! - b.validation!.mae!)
   return trainedTrajectory.value ? usable.filter(item => hasMinuteForecast(item, 30)) : usable
 })
 const selectedCandidate = computed(() => candidates.value.find(item => item.key === selected.value))
@@ -124,11 +128,12 @@ async function applyModel(experiment: Experiment, algorithm: string) {
   saving.value = true
   error.value = ''
   const key = experiment.id + '/' + algorithm
-  const zoneLabel = experiment.config.zone ? `${experiment.config.zone}区` : '总体温度'
+  const zoneLabel = task.value === 'energy' ? '燃气流量' : experiment.config.zone ? `${experiment.config.zone}区` : '总体温度'
   try {
     const bundle = saved.value[key] ?? await studioPost<Bundle>(`/projects/${props.bundle.projectId}/bundles`, {
       title: (`${zoneLabel} · ${experiment.config.horizonMinutes}分钟 · ${props.bundle.title}`).slice(0, 160),
-      selections: props.bundle.manifest.map(item => item.task === 'temperature'
+      baseBundleId: props.bundle.id,
+      selections: props.bundle.manifest.map(item => item.task === task.value
         ? { experimentId: experiment.id, algorithm }
         : { experimentId: item.experimentId, algorithm: item.algorithm }),
     })
@@ -177,9 +182,9 @@ defineExpose({ optimizeAndApply, trainTrajectoryAndApply, applyModel })
 </script>
 
 <template>
-  <section class="refit" aria-label="温度模型重新标定与对比">
+  <section class="refit" :aria-label="subject + '模型重新标定与对比'">
     <header>
-      <div><h3>重新标定并比较温度模型</h3><p>当前为 {{ source.algorithmName }}，提前 {{ source.config.horizonMinutes }} 分钟。可在同一数据版本上重新训练并比较候选。</p></div>
+      <div><h3>重新标定并比较{{ subject }}模型</h3><p>当前为 {{ source.algorithmName }}，提前 {{ source.config.horizonMinutes }} 分钟。可在同一数据版本上重新训练并比较候选。</p></div>
       <button type="button" class="primary" :disabled="running || saving || !canRun" @click="pendingMode === 'trajectory' ? trainTrajectoryAndApply() : train()">
         <Loader2 v-if="running" class="animate-spin" :size="15" /><RefreshCw v-else :size="15" />{{ running ? '正在回测' : pendingJob ? '继续查看后台结果' : '标定并比较模型' }}
       </button>
@@ -189,7 +194,7 @@ defineExpose({ optimizeAndApply, trainTrajectoryAndApply, applyModel })
       <div class="settings">
         <label>预测提前量<select v-model.number="horizon" :disabled="running || !!pendingJob"><option :value="10">10 分钟</option><option v-if="source.config.horizonMinutes !== 10" :value="source.config.horizonMinutes">{{ source.config.horizonMinutes }} 分钟（与当前模型一致）</option></select></label>
         <label>历史窗口 / 分钟<input v-model.number="historyMinutes" type="number" min="5" max="240" :disabled="running || !!pendingJob" /></label>
-        <label><input v-model="calibrateResponse" type="checkbox" :disabled="running || !!pendingJob" />用训练记录重新标定热响应时间</label>
+        <label v-if="task === 'temperature'"><input v-model="calibrateResponse" type="checkbox" :disabled="running || !!pendingJob" />用训练记录重新标定热响应时间</label>
         <label><input v-model="excludeZero" type="checkbox" :disabled="running || !!pendingJob" />将设定与全部温区同时为零的记录按缺测处理</label>
       </div>
       <p>本次比较 {{ available.map(item => item.name).join('、') }}。标定和模型训练使用训练记录，候选建议依据完整验证记录。</p>
@@ -205,8 +210,8 @@ defineExpose({ optimizeAndApply, trainTrajectoryAndApply, applyModel })
         <thead><tr><th scope="col">模型</th><th scope="col">验证平均相差</th><th scope="col">验证综合温差</th><th scope="col">测试平均相差</th><th scope="col">测试综合温差</th></tr></thead>
         <tbody><tr v-for="item in candidates" :key="item.key">
           <th scope="row"><label><input v-model="selected" type="radio" :value="item.key" :disabled="saving" />{{ item.name }}</label></th>
-          <td>{{ formatKilnReading(item.validation?.mae, '℃') }}</td><td>{{ formatKilnReading(item.validation?.rmse, '℃') }}</td>
-          <td>{{ formatKilnReading(item.test?.mae, '℃') }}</td><td>{{ formatKilnReading(item.test?.rmse, '℃') }}</td>
+          <td>{{ formatKilnReading(item.validation?.mae, unit) }}</td><td>{{ formatKilnReading(item.validation?.rmse, unit) }}</td>
+          <td>{{ formatKilnReading(item.test?.mae, unit) }}</td><td>{{ formatKilnReading(item.test?.rmse, unit) }}</td>
         </tr></tbody>
       </table></div>
       <p v-for="item in trained.algorithms.filter(item => !item.available)" :key="item.key">{{ item.name }} · {{ item.note }}</p>

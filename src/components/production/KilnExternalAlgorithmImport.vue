@@ -115,7 +115,8 @@ async function submit() {
       </button>
     </div>
     <template v-else>
-      <div><h3>导入外部 ONNX 模型</h3><p class="muted">上传已训练的单文件表格回归模型。平台按下方映射试跑，成功后保存到算法库。</p></div>
+      <div><h3>导入外部已训练模型</h3><p class="muted">上传已训练的单文件 ONNX 表格回归模型。平台按下方映射真实试跑，成功后保存到当前账号的算法库；不会重新训练。</p></div>
+      <p class="import-contract">当前入口：单个二维输入 [批次, 特征数]、每行一个预测值，预处理须包含在 ONNX 中。双输入序列、多时距输出模型及部署 ZIP 暂不能从此入口导入。</p>
       <p v-if="error" class="problem" role="alert">{{ error }}</p>
       <p v-if="contractLoading" class="muted" role="status">正在读取支持的输入特征…</p>
       <button v-else-if="!contract" type="button" class="action secondary" @click="loadContract">重试</button>
@@ -175,6 +176,7 @@ async function submit() {
 button:disabled { opacity:.55; cursor:default; }
 .muted { color:var(--muted-foreground); font-size:12px; line-height:1.6; }
 .problem { color:var(--destructive); }
+.import-contract { border:1px solid var(--border); background:var(--muted); border-radius:6px; padding:10px; font-size:12px; line-height:1.8; }
 .import-result { padding:10px 0; }
 .import-result dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:8px 14px; margin:16px 0; }
 .import-result dt { color:var(--muted-foreground); }

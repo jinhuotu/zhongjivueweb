@@ -226,6 +226,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/decision-flow', label: '低代码决策分析', icon: Boxes },
       { href: '/model-package', label: '模型封装导出', icon: PackageOpen },
+      { href: '/algorithm-manage', label: '算法管理', icon: Cpu, adminOnly: true },
     ],
   },
   {

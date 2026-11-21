@@ -38,3 +38,9 @@ export function replayFuelVolume(points: ReplayPoint[], window: number, maxGap: 
   }
   return { volume: covered ? volume : null, covered, complete: Math.abs(window - covered) <= tolerance }
 }
+
+export function replayAlgorithmFuelVolume(points: ReplayPoint[], window: number, nativeMinutes: number, trajectory?: string | null) {
+  const minuteOutput = ['multiOutput', 'minuteRecursive', 'persistence', 'mechanism'].includes(trajectory ?? '')
+  const allowedGap = minuteOutput ? 1 : Math.min(nativeMinutes, 5)
+  return replayFuelVolume(points, window, allowedGap)
+}

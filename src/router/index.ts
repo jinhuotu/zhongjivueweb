@@ -38,6 +38,7 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/data-governance': () => import('@/views/DataGovernanceView.vue'),
   '/decision-flow': () => import('@/views/DecisionFlowView.vue'),
   '/model-package': () => import('@/views/ModelPackageView.vue'),
+  '/algorithm-manage': () => import('@/views/AlgorithmManageView.vue'),
   '/energy': () => import('@/views/EnergyView.vue'),
   '/energy-flow': () => import('@/views/EnergyFlowView.vue'),
   '/optimization': () => import('@/views/OptimizationView.vue'),

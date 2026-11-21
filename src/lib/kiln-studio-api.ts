@@ -1,5 +1,6 @@
 import { apiDownload, apiRequest, getApiBaseUrl } from './api'
 import { getAccessToken } from './auth'
+import type { AlgorithmRelease } from './kiln-algorithm-management'
 
 export type Task = 'temperature' | 'energy' | 'afr'
 export type AlgorithmKey = string
@@ -12,7 +13,15 @@ export type ExternalAlgorithmMetadata = Omit<ExternalAlgorithmSpec, 'name' | 'de
   fileName: string; sha256: string; byteSize: number; inputName: string; outputName: string
   inputType: 'float32' | 'float64'; probeOutput: number
 }
-export type ExternalAlgorithmContract = { features: string[]; maxBytes: number }
+export type ExternalAlgorithmContract = { features: string[]; maxBytes: number; formats?: string[]; inputRank?: number; inputCount?: number; outputMode?: string; supportsSequence?: boolean; supportsMultipleHorizons?: boolean; requiresEmbeddedPreprocessing?: boolean }
+export type AlgorithmOptionValue = string | number | boolean | null
+export type AlgorithmParameterField = { type: 'number' | 'integer' | 'boolean' | 'string'; title?: string; description?: string; default?: AlgorithmOptionValue; enum?: AlgorithmOptionValue[]; minimum?: number; maximum?: number; exclusiveMinimum?: number; exclusiveMaximum?: number; minLength?: number; maxLength?: number }
+export type AlgorithmParameterSchema = { properties?: Record<string, AlgorithmParameterField>; required?: string[] }
+export type AlgorithmCapability = { status: 'supported' | 'conditional' | 'unsupported'; detail: string }
+export type AlgorithmCapabilities = {
+  trainingMode: 'trainable' | 'calculated' | 'frozen'; trainingDetail: string; supportedTasks: Task[]
+  inference: AlgorithmCapability; minuteForecast: AlgorithmCapability; onnxExport: AlgorithmCapability; pythonExport: AlgorithmCapability
+}
 type Level = 'high' | 'medium' | 'low'
 export type AlgorithmMetadata = {
   key: AlgorithmKey; name: string; category: string; oneLine: string
@@ -24,6 +33,10 @@ export type AlgorithmMetadata = {
   tuning?: AlgorithmTuning | null
   parentKey?: AlgorithmKey | null
   external?: ExternalAlgorithmMetadata | null
+  package?: { sha256: string; tasks: Task[] } | null
+  sourceKind?: 'builtin' | 'preset' | 'external' | 'package' | null
+  capabilities?: AlgorithmCapabilities | null
+  parameterSchema?: AlgorithmParameterSchema | null
 }
 export type BacktestStatus = 'not_run' | 'unavailable' | 'backtested'
 type BacktestMetric = Pick<Metric, 'mae' | 'rmse' | 'coverage' | 'count'>
@@ -112,7 +125,7 @@ export type Algorithm = AlgorithmIdentity & Partial<Omit<AlgorithmMetadata, keyo
   predictionOffsets?: number[]
 }
 export type LockableParameter = 'capacityKJ' | 'lossKW' | 'tauMinutes'
-export type ExperimentConfig = { datasetId: string; mechanismId: string; task: Task; zone: number; horizonMinutes: number; historyMinutes: number; ridgeAlpha: number; boostingRounds: number; learningRate: number; calibrate: boolean; excludeZeroTemperatureRecords?: boolean; lockedParameters: LockableParameter[]; selectedAlgorithmKeys?: AlgorithmKey[] | null }
+export type ExperimentConfig = { datasetId: string; mechanismId: string; task: Task; zone: number; horizonMinutes: number; historyMinutes: number; ridgeAlpha: number; boostingRounds: number; learningRate: number; calibrate: boolean; excludeZeroTemperatureRecords?: boolean; lockedParameters: LockableParameter[]; selectedAlgorithmKeys?: AlgorithmKey[] | null; algorithmOptions?: Record<string, Record<string, AlgorithmOptionValue>> }
 export type ExperimentPoint = {
   ts: string; origin: string; cycle: string; split: 'validation' | 'test'; actual: number; setpoint: number | null
   cumulative?: Partial<Record<AlgorithmKey, number>>
@@ -236,12 +249,25 @@ export type TemperatureTrajectory = 'mechanism' | 'persistence' | 'minuteRecursi
 export type ReplayPackage = {
   request: ReplayRequest & { frameStepMinutes: number }; cycleName: string; zone: number; targetLabel: string
   task: Task; unit: string
-  algorithms: { key: AlgorithmKey; name: string; mode: 'mechanism' | 'fusion' | 'recursive'; trainedHorizonMinutes: number; temperatureTrajectory?: TemperatureTrajectory | null }[]
+  algorithms: { key: AlgorithmKey; name: string; mode: 'mechanism' | 'fusion' | 'recursive'; trainedHorizonMinutes: number; temperatureTrajectory?: TemperatureTrajectory | null; forecastTrajectory?: TemperatureTrajectory | null }[]
   baseSeries: ReplayBasePoint[]; frames: ReplayFrame[]; notes: string[]; excludedCount?: number
 }
 export type Simulation = { cursor: string; cycle: string; temperatureOffsetC: number; bundleId: string; bundleVersion: string; scope: string; outputs: { task: Task; algorithm: AlgorithmKey; baseline: number | null; adjusted: number | null; unit?: string; horizonMinutes?: number; note: string }[] }
 
 const prefix = '/api/v1/kiln-studio'
+const packagePath = `${prefix}/algorithm-management/packages`
+
+export function uploadAlgorithmPackage(file: File, releaseId: string) {
+  const query = releaseId ? `?release_id=${encodeURIComponent(releaseId)}` : ''
+  return apiRequest<AlgorithmRelease>(packagePath + query, {
+    method: 'POST', binary: new Blob([file], { type: 'application/zip' }), token: getAccessToken(),
+  })
+}
+
+export function downloadAlgorithmExample() {
+  return apiDownload(`${packagePath}/example`, { token: getAccessToken(), fallbackName: 'kiln-temperature-trend.zip' })
+}
+
 export function studioGet<T>(path: string): Promise<T> { return apiRequest<T>(prefix + path, { token: getAccessToken() }) }
 export function studioPost<T>(path: string, body: unknown): Promise<T> { return apiRequest<T>(prefix + path, { method: 'POST', body, token: getAccessToken() }) }
 export function deleteStudioFile(projectId: string, fileId: string): Promise<{ deletedId: string }> {

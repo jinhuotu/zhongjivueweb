@@ -13,22 +13,20 @@ import {
 } from '@/lib/kiln-overview-model'
 import { scada, scadaStatusColor, scadaTooltip } from '@/lib/kiln-scada-theme'
 import KilnEnergyPanel from './KilnEnergyPanel.vue'
-import type { Bundle, Experiment, ReplayPackage } from '@/lib/kiln-studio-api'
+import type { Bundle, ReplayPackage } from '@/lib/kiln-studio-api'
 
 // 工业控制室总览：深色自包含（不影响其他页面），一屏展示状态栏、KPI、主趋势、健康仪表与误差。
 const props = defineProps<{
-  bundle: Bundle
+  model?: Bundle['manifest'][number]
   replay?: ReplayPackage
   busy: boolean
-  experiment?: Experiment
-  algorithmKey: string
+  error?: string
 }>()
-const emit = defineEmits<{ 'request-replay': []; configure: [] }>()
+const emit = defineEmits<{ 'request-replay': [] }>()
 
 ensureEcharts()
 
-// 当前任务在 bundle 中绑定的模型项（含验证 MAE 等）
-const model = computed(() => props.bundle.manifest.find(item => item.algorithm === props.algorithmKey))
+const algorithmKey = computed(() => props.model?.algorithm ?? '')
 // 总览视图模型（KPI 汇总、阶段划分等）
 const overview = computed(() => props.replay ? buildOverviewModel(props.replay) : null)
 // 二级视图：运行总览（默认，动态播放）/ 能碳概览（因子可配置）
@@ -40,7 +38,7 @@ const current = computed(() => props.replay?.frames[cursor.value])
 const currentSnapshot = computed(() => current.value?.snapshot)
 // 当前帧的逐点预测误差
 const errors = computed(() =>
-  current.value ? frameErrorSeries(current.value, props.algorithmKey) : [])
+  current.value ? frameErrorSeries(current.value, algorithmKey.value) : [])
 
 // 主图聚焦模式：local=当前时刻前后窗口（默认，预测段看得清）/ full=全窑次
 const focusMode = ref<'local' | 'full'>('local')
@@ -48,7 +46,7 @@ const focusMode = ref<'local' | 'full'>('local')
 const showEnvelope = ref(true)
 // 当前算法的回测误差包络（回放包/算法变化时重算，与播放游标无关，只算一次）
 const envelope = computed(() =>
-  props.replay ? backtestEnvelope(props.replay, props.algorithmKey) : null)
+  props.replay ? backtestEnvelope(props.replay, algorithmKey.value) : null)
 // 局部窗口：起点前回看 60 分钟；终点后预测窗口取回放请求的 horizon
 const lookback = 60
 const predictWindow = computed(() => props.replay?.request.horizonMinutes ?? 30)
@@ -56,7 +54,7 @@ const mainChart = ref<InstanceType<typeof VChart>>()
 const mainTip = ref<HTMLDivElement>()
 const pointerInside = ref(false)
 const tipPosition = ref({ left: '8px', top: '8px', visibility: 'hidden' as 'hidden' | 'visible' })
-const forecastTip = computed(() => followingForecast(current.value, props.algorithmKey, predictWindow.value, envelope.value ?? undefined))
+const forecastTip = computed(() => followingForecast(current.value, algorithmKey.value, predictWindow.value, envelope.value ?? undefined))
 let tipAnimationFrame = 0
 
 function placeMainTip() {
@@ -101,8 +99,8 @@ watch(() => props.replay, replay => {
   cursor.value = 0
   if (replay) startPlay()
 }, { immediate: true })
-watch(() => [props.replay, props.busy] as const, ([replay, busy]) => {
-  if (!replay && !busy) emit('request-replay')
+watch(() => [props.replay, props.busy, props.error] as const, ([replay, busy, error]) => {
+  if (!replay && !busy && !error) emit('request-replay')
 }, { immediate: true })
 
 // 顶部状态栏：当前阶段、阶段内进度与全窑次进度
@@ -173,7 +171,7 @@ const mainOption = computed<EChartsOption>(() => {
   ]
   // 仅温度任务的回放包，其 future 是温度预测，可直接叠加
   if (props.replay?.task === 'temperature') {
-    const prediction = current.value.future[props.algorithmKey] ?? []
+    const prediction = current.value.future[algorithmKey.value] ?? []
     series.push({
       id: 'prediction', type: 'line', name: '温度预测', showSymbol: true, symbol: 'circle', symbolSize: 5,
       data: [[curMinute, currentSnapshot.value.temp],
@@ -182,7 +180,7 @@ const mainOption = computed<EChartsOption>(() => {
     })
     // 回测误差范围：在预测两侧画同色半透明上下界（残差标准差），不填充、不称置信区间
     if (showEnvelope.value && envelope.value) {
-      const band = envelopeBand(current.value, props.algorithmKey, envelope.value)
+      const band = envelopeBand(current.value, algorithmKey.value, envelope.value)
       const boundaryData = (selector: (point: (typeof band)[number]) => number | null) =>
         band.map(point => [curMinute + point.minuteOffset, selector(point)])
       const boundaryStyle = { color: scada.prediction, width: 1, opacity: 0.55 }
@@ -302,7 +300,7 @@ const kpis = computed(() => [
   { label: '峰值温度', value: formatKilnNumber(overview.value?.peakTemp), unit: '℃', accent: scada.amber, hint: '全窑次最高温度' },
   { label: '当前温度', value: formatKilnNumber(currentSnapshot.value?.temp), unit: '℃', accent: scada.actual, hint: '随播放节点变化' },
   { label: '当前燃气瞬时', value: formatKilnNumber(currentSnapshot.value?.gas), unit: 'Nm³/h', accent: scada.prediction, hint: '随播放节点变化' },
-  { label: '验证 MAE', value: formatKilnNumber(model.value?.validation.mae), unit: props.replay?.unit, accent: scada.violet, hint: '离线留出验证，非现场精度' },
+  { label: '验证 MAE', value: formatKilnNumber(props.model?.validation.mae), unit: props.model?.unit, accent: scada.violet, hint: '离线留出验证，非现场精度' },
 ])
 </script>
 
@@ -311,7 +309,10 @@ const kpis = computed(() => [
     <div v-if="!replay" class="scada-empty" role="status">
       <Loader2 v-if="busy" class="animate-spin" :size="18" />
       <span v-if="busy">正在生成总览数据，请稍候…</span>
-      <button v-else type="button" class="scada-btn" @click="emit('request-replay')">生成总览</button>
+      <template v-else>
+        <span v-if="error">{{ error }}</span>
+        <button type="button" class="scada-btn" @click="emit('request-replay')">{{ error ? '重试总览' : '生成总览' }}</button>
+      </template>
     </div>
 
     <template v-else>

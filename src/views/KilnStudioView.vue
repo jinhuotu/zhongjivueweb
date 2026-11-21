@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight, Download, FileArchive, FileText, FlaskConical, FolderOpen, History, Info, Loader2, PanelLeft, PanelRight, Play, Plus, RotateCcw, Save, Settings2, Sparkles, Upload, X } from 'lucide-vue-next'
 import { PageHeader } from '@/components/ui-kit'
+import { canAccessPath } from '@/config/nav'
+import { algorithmParameterDefaults } from '@/lib/kiln-algorithm-library'
+import { matchAlgorithmLibraryOrigin, readAlgorithmLibraryOrigin, rememberAlgorithmLibraryOrigin } from '@/lib/kiln-algorithm-library-origin'
+import { useAuthStore } from '@/stores/auth'
 import KilnAlgorithmComparisonCharts from '@/components/production/KilnAlgorithmComparisonCharts.vue'
 import KilnAlgorithmResults from '@/components/production/KilnAlgorithmResults.vue'
 import KilnAlgorithmLibrary from '@/components/production/KilnAlgorithmLibrary.vue'
@@ -22,12 +26,15 @@ import { createReplay, getDemoFile, getReplay, recommendAlgorithms, studioGet, s
 import { externalAlgorithmIssue, hasUsableBacktest, sameExperimentConfig, samePhysicsParameters, sameTemplateSelection } from '@/lib/kiln-studio-state'
 import { algorithmTuningLabel, formatKilnNumber as fmt, formatKilnParameterInput, formatKilnReading, KILN_PARAMETER_DIGITS, kilnReadingDigits } from '@/lib/kiln-studio-format'
 import { catalogUseIssue, matchingCatalogVersions, retainCatalogVersion } from '@/lib/kiln-mechanism-catalog'
-import type { AlgorithmKey, AlgorithmMetadata, AlgorithmRecommendationResponse, Bundle, CatalogVersion, Dataset, Draft, Experiment, ExperimentConfig, Job, LockableParameter, Mapping, Mechanism, Parameters, Project, ReplayPackage, ReplayRequest, Selection, Simulation, Source, StudioState, Task } from '@/lib/kiln-studio-api'
+import type { AlgorithmKey, AlgorithmMetadata, AlgorithmOptionValue, AlgorithmRecommendationResponse, Bundle, CatalogVersion, Dataset, Draft, Experiment, ExperimentConfig, Job, LockableParameter, Mapping, Mechanism, Parameters, Project, ReplayPackage, ReplayRequest, Selection, Simulation, Source, StudioState, Task } from '@/lib/kiln-studio-api'
 
 type Step = 'archive' | 'data' | 'mechanism' | 'experiment' | 'bundle' | 'knowledge'
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const canOpenModelPackage = computed(() => canAccessPath('/model-package', auth.isAdmin, auth.menus))
 const requestedProjectId = computed(() => typeof route.query.project === 'string' ? route.query.project : '')
+const validationRelease = computed(() => typeof route.query.validationRelease === 'string' ? route.query.validationRelease : '')
 const steps: { key: Step; title: string; subtitle: string }[] = [
   { key: 'archive', title: '资料解析', subtitle: '理解设备与文档' }, { key: 'data', title: '数据确认', subtitle: '确认测点和口径' },
   { key: 'mechanism', title: '机理与参数', subtitle: '有来源的工程关系' }, { key: 'experiment', title: '算法库', subtitle: '观看预测效果' },
@@ -49,6 +56,8 @@ const step = ref<Step>('archive')
 const error = ref('')
 const notice = ref('')
 const busy = ref(false)
+const savingDataset = ref(false)
+const workflowNav = ref<HTMLElement>()
 const loading = ref(false)
 const activeJob = ref<Job | null>(null)
 const input = ref<HTMLInputElement | null>(null)
@@ -98,6 +107,7 @@ const chartSplit = ref<'validation' | 'test'>('validation')
 const selections = ref<Partial<Record<Task, Selection>>>({})
 const pendingAlgorithm = ref<AlgorithmKey>()
 const algorithmLibraryOpen = ref(false)
+const algorithmLibraryFocus = ref('')
 const advice = ref<AlgorithmRecommendationResponse>()
 const adviceLoading = ref(false)
 const adviceError = ref('')
@@ -111,6 +121,10 @@ const splitGuide: Record<string, { label: string; purpose: string }> = {
 }
 const bundleTitle = ref('窑炉预测组合模型')
 const bundleId = ref('')
+const baseBundleId = ref('')
+const addedBundleTask = ref<Task>()
+const dashboardTask = ref<Task>()
+const bundleComposition = ref<HTMLDetailsElement>()
 const cursorFraction = ref(.6)
 const temperatureOffset = ref(0)
 const simulation = ref<Simulation | null>(null)
@@ -234,6 +248,7 @@ const referenceParameters = computed(() => catalogById.value.get(catalogSelectio
 const experiments = computed(() => state.value?.experiments.filter(x => x.datasetId === datasetId.value && x.config.task === config.value.task) ?? [])
 const comparison = computed(() => state.value?.experiments.find(x => x.id === comparisonId.value))
 const bundle = computed(() => state.value?.bundles.find(x => x.id === bundleId.value))
+const baseBundle = computed(() => state.value?.bundles.find(item => item.id === baseBundleId.value))
 const running = computed(() => busy.value || ['queued', 'running'].includes(activeJob.value?.status ?? ''))
 const mechanismDirty = computed(() => !!mechanism.value && (
   !samePhysicsParameters(parameters.value, mechanism.value.parameters) || !sameTemplateSelection(templateKeys.value, mechanism.value.templateKeys)
@@ -387,27 +402,46 @@ async function openProject(id: string) {
   knowledgeOpen.value = false
   clearTimeout(pollTimer); pollSequence++; loadSequence++; state.value = null; activeJob.value = null; equipmentApplied = false
   datasetId.value = ''; mechanismId.value = ''; draftId.value = ''; experimentId.value = ''; comparisonId.value = ''; bundleId.value = ''; selectedFileId.value = ''; source.value = null; selections.value = {}; simulation.value = null
+  baseBundleId.value = ''; addedBundleTask.value = undefined; dashboardTask.value = undefined
   mappings.value = {}; fileEnabled.value = {}; useStandard.value = {}; parameters.value = { ...defaults }; provenance.value = {}; parentId.value = null; calibrationExperimentId.value = null; assumptionsAccepted.value = false
   templateKeys.value = [...initialTemplates]; activeTemplate.value = 'energy'; mechanismTitle.value = '窑炉机理参数方案'; notes.value = ''
   catalogSelections.value = {}; catalogAlternatives.value = []; catalogOpen.value = false
   algorithmLibraryOpen.value = false
+  algorithmLibraryFocus.value = ''
   config.value = { ...initialExperiment, lockedParameters: [] }; chartSplit.value = 'validation'
   zoneCount.value = 6; burnerCount.value = 6; acknowledge.value = false; flowConfirmed.value = false; projectId.value = id; step.value = 'archive'; loading.value = !!id
   try {
     if (requestedProjectId.value !== id) {
-      await router.replace({ query: { ...route.query, project: id || undefined } })
+      await router.replace({ query: { ...route.query, project: id || undefined, prepare: undefined, dataset: undefined, validationRelease: undefined, libraryOrigin: undefined, openLibrary: undefined, publishedAlgorithm: undefined } })
     }
     if (!id || disposed) return
     await refreshProject(id)
     if (disposed || requestedProjectId.value !== id) return
     const loaded = state.value as StudioState | null
+    const origin = route.query.openLibrary === '1'
+      ? readAlgorithmLibraryOrigin(route.query.libraryOrigin, auth.user?.id)
+      : undefined
+    const restored = origin && loaded ? matchAlgorithmLibraryOrigin(origin, loaded) : undefined
+    if (restored?.dataset) datasetId.value = restored.dataset.id
+    if (validationRelease.value) {
+      const requestedDataset = loaded?.datasets.find(item => item.id === route.query.dataset)
+      if (requestedDataset) datasetId.value = requestedDataset.id
+      if (route.query.prepare === 'data' || route.query.prepare === 'mechanism') step.value = route.query.prepare
+    }
     const pending = loaded?.jobs.find(x => ['queued', 'running'].includes(x.status))
     if (pending) watchJob(pending)
     else activeJob.value = loaded?.jobs[0] ?? null
-    const saved = loaded?.mechanisms.find(x => x.datasetId === datasetId.value)
+    const saved = restored?.mechanism ?? loaded?.mechanisms.find(x => x.datasetId === datasetId.value)
     if (saved) loadMechanism(saved)
     else if (loaded?.drafts[0]) loadDraft(loaded.drafts[0])
     if (dataset.value) { zoneCount.value = dataset.value.config.zoneCount; burnerCount.value = dataset.value.config.burnerCount; kilnCode.value = dataset.value.config.kilnCode; flowConfirmed.value = true }
+    if (restored && origin) {
+      config.value = { ...origin.config, datasetId: datasetId.value, mechanismId: mechanismId.value }
+      experimentId.value = restored.experiment?.id ?? ''
+      algorithmLibraryFocus.value = typeof route.query.publishedAlgorithm === 'string' ? route.query.publishedAlgorithm : ''
+      step.value = 'experiment'
+      algorithmLibraryOpen.value = true
+    }
   } finally { loading.value = false }
 }
 function returnToUpload() {
@@ -502,12 +536,28 @@ function setColumn(fileId: string, column: string, event: Event) {
   mappings.value[fileId] = list.filter(m => m.column !== column)
   if (field) mappings.value[fileId]!.push({ column, field, scale: existing?.scale ?? 1, offset: existing?.offset ?? 0 })
 }
-function confirm() { void action(async () => {
-  const files = dataFiles.value.filter(f => fileEnabled.value[f.id]).map(f => ({ fileId: f.id, mappings: mappings.value[f.id] ?? [], useStandard: useStandard.value[f.id] ?? false }))
-  const result = await studioPost<Dataset>(`/projects/${projectId.value}/datasets`, { name: `数据版本 ${new Date().toLocaleString('zh-CN')}`, kilnCode: kilnCode.value, zoneCount: zoneCount.value, burnerCount: burnerCount.value, files, acknowledgeConflicts: acknowledge.value, flowBasis: flowConfirmed.value ? 'normal' : 'unknown' })
-  await refreshProject(); datasetId.value = result.id; mechanismId.value = ''; experimentId.value = ''; selections.value = {}; draftId.value = ''; assumptionsAccepted.value = false; step.value = 'mechanism'; notice.value = '已保存独立数据版本，原始文件和旧实验保持可追溯。'
-  catalogSelections.value = {}; catalogAlternatives.value = []
-}) }
+function confirm() {
+  if (running.value) return
+  void action(async () => {
+    const id = projectId.value
+    savingDataset.value = true
+    try {
+      const files = dataFiles.value.filter(f => fileEnabled.value[f.id]).map(f => ({ fileId: f.id, mappings: mappings.value[f.id] ?? [], useStandard: useStandard.value[f.id] ?? false }))
+      const result = await studioPost<Dataset>(`/projects/${id}/datasets`, { name: `数据版本 ${new Date().toLocaleString('zh-CN')}`, kilnCode: kilnCode.value, zoneCount: zoneCount.value, burnerCount: burnerCount.value, files, acknowledgeConflicts: acknowledge.value, flowBasis: flowConfirmed.value ? 'normal' : 'unknown' })
+      if (disposed || projectId.value !== id || !state.value) return
+      // The save response is the committed dataset. Avoid waiting for a full project reload.
+      clearTimeout(pollTimer); pollSequence++; loadSequence++
+      state.value = { ...state.value, datasets: [result, ...state.value.datasets.filter(item => item.id !== result.id)] }
+      datasetId.value = result.id; mechanismId.value = ''; experimentId.value = ''; selections.value = {}; draftId.value = ''; assumptionsAccepted.value = false
+      catalogSelections.value = {}; catalogAlternatives.value = []
+      knowledgeOpen.value = false
+      step.value = 'mechanism'
+      notice.value = '数据版本已保存，已进入第三步“机理与参数”。'
+      await nextTick()
+      if (!disposed && projectId.value === id) workflowNav.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } finally { savingDataset.value = false }
+  })
+}
 function interpretFields() { void action(async () => watchJob(await studioPost<Job>(`/projects/${projectId.value}/interpret`, {}))) }
 function applyFieldSuggestions() {
   const suggestion = state.value?.mappingDrafts[0]
@@ -598,18 +648,46 @@ function algorithmName(key: AlgorithmKey | null) {
 function toggleComparisonAlgorithm(key: AlgorithmKey) {
   if (running.value) return
   const keys = comparisonAlgorithmKeys.value
-  if (keys.includes(key)) config.value.selectedAlgorithmKeys = keys.filter(item => item !== key)
+  if (keys.includes(key)) {
+    config.value.selectedAlgorithmKeys = keys.filter(item => item !== key)
+    const options = { ...config.value.algorithmOptions }; delete options[key]
+    config.value.algorithmOptions = options
+  }
   else if (keys.length < 32) {
     const item = algorithmsByKey.value.get(key)
     if (item?.status !== 'enabled' || externalAlgorithmIssue(item, currentConfig.value)) return
+    if (item.capabilities && !item.capabilities.supportedTasks.includes(config.value.task)) return
+    if (item.parameterSchema) config.value.algorithmOptions = { ...config.value.algorithmOptions,
+      [key]: algorithmParameterDefaults(item, config.value.algorithmOptions?.[key]) }
     config.value.selectedAlgorithmKeys = [...keys, key]
   }
+}
+function configureAlgorithm(key: string, values: Record<string, AlgorithmOptionValue>) {
+  if (running.value) return
+  const item = algorithmsByKey.value.get(key)
+  if (!item || item.status !== 'enabled' || (item.capabilities && !item.capabilities.supportedTasks.includes(config.value.task))) return
+  config.value.algorithmOptions = { ...config.value.algorithmOptions, [key]: values }
+  if (!comparisonAlgorithmKeys.value.includes(key)) toggleComparisonAlgorithm(key)
 }
 function updateAlgorithmLibrary(item: AlgorithmMetadata) {
   if (!state.value) return
   const index = state.value.algorithmLibrary.findIndex(existing => existing.key === item.key)
   if (index < 0) state.value.algorithmLibrary = [item, ...state.value.algorithmLibrary]
   else state.value.algorithmLibrary.splice(index, 1, item)
+}
+async function refreshAlgorithmLibrary() {
+  try {
+    const result = await studioGet<{ items: AlgorithmMetadata[] }>('/algorithm-library')
+    if (state.value) state.value.algorithmLibrary = result.items
+  } catch (err) { error.value = err instanceof Error ? err.message : '算法列表刷新失败' }
+}
+function openAlgorithmManagement() {
+  if (!auth.user || !projectId.value) return
+  const libraryOrigin = rememberAlgorithmLibraryOrigin({
+    accountId: auth.user.id, projectId: projectId.value, experimentId: experiment.value?.id ?? '',
+    config: { ...currentConfig.value, selectedAlgorithmKeys: [...comparisonAlgorithmKeys.value] },
+  })
+  void router.push({ path: '/algorithm-manage', query: { project: projectId.value, dataset: datasetId.value || undefined, libraryOrigin } })
 }
 function useBacktestedAlgorithm(key: AlgorithmKey): boolean {
   const current = experiment.value
@@ -671,9 +749,91 @@ function selectionLabel(task: Task) {
   const exp = state.value?.experiments.find(x => x.id === selected?.experimentId)
   return exp ? `${exp.algorithms.find(a => a.key === selected?.algorithm)?.name} · ${exp.config.horizonMinutes} min · 机理 ${exp.mechanismVersion}` : '尚未选用'
 }
+function selectBundle(id: string) {
+  if (running.value) return
+  dashboardTask.value = undefined
+  bundleId.value = id
+}
+function bundleOptionLabel(item: Bundle) {
+  const coverage = item.manifest.map(model => labels[model.task]).join('、')
+  return `${item.title} · ${item.version} · ${coverage} · ${time(item.createdAt)}`
+}
+async function useBaseBundle(source: Bundle) {
+  if (running.value || source.projectId !== projectId.value) return false
+  if (!state.value?.datasets.some(item => item.id === source.datasetId)) {
+    error.value = '当前版本缺少绑定的数据集，无法用于组合新版本。'
+    return false
+  }
+  if (datasetId.value !== source.datasetId) {
+    datasetId.value = source.datasetId
+    await nextTick()
+  }
+  if (disposed || source.id !== bundleId.value || source.projectId !== projectId.value ||
+    source.datasetId !== datasetId.value) return false
+  if (baseBundleId.value !== source.id) {
+    const inherited = Object.fromEntries(source.manifest.map(model => [
+      model.task, { experimentId: model.experimentId, algorithm: model.algorithm },
+    ]))
+    selections.value = { ...selections.value, ...inherited }
+    baseBundleId.value = source.id
+    addedBundleTask.value = undefined
+  }
+  error.value = ''
+  return true
+}
+async function inheritBundle() {
+  if (!bundle.value || !await useBaseBundle(bundle.value)) return
+  if (bundleComposition.value) bundleComposition.value.open = true
+}
+async function addBundleTask(task: Task) {
+  const source = bundle.value
+  if (!source || !await useBaseBundle(source)) return
+  addedBundleTask.value = task
+  config.value.task = task
+  config.value.zone = 0
+  const preferred = selections.value[task]?.experimentId
+  const saved = experiments.value.find(item => item.id === preferred) ?? experiments.value.find(item =>
+    item.algorithms.some(algorithm => {
+      const definition = algorithmsByKey.value.get(algorithm.key)
+      return definition?.status === 'enabled' && (algorithm.version ?? '1') === definition.version &&
+        hasUsableBacktest(algorithm)
+    })) ?? experiments.value[0]
+  if (saved) openExperiment(saved)
+  else {
+    experimentId.value = ''
+    comparisonId.value = ''
+    config.value = {
+      ...initialExperiment, task, lockedParameters: [],
+      selectedAlgorithmKeys: initialExperiment.selectedAlgorithmKeys?.filter(key => {
+        const definition = algorithmsByKey.value.get(key)
+        return definition?.status === 'enabled' && (definition.capabilities?.supportedTasks.includes(task) ?? true)
+      }),
+    }
+    const savedMechanism = state.value?.mechanisms.find(item => item.datasetId === source.datasetId &&
+      source.manifest.some(model => model.mechanismId === item.id))
+    if (savedMechanism) loadMechanism(savedMechanism)
+  }
+  notice.value = `正在为版本 ${source.version} 补充${labels[task]}。选用算法后，返回「模型与看板」生成新版本。`
+  step.value = 'experiment'
+  await nextTick()
+  if (step.value === 'experiment') workflowNav.value?.scrollIntoView({ block: 'start' })
+}
 function build() { void action(async () => {
-  const result = await studioPost<Bundle>(`/projects/${projectId.value}/bundles`, { title: bundleTitle.value, selections: Object.values(selections.value) })
-  await refreshProject(); bundleId.value = result.id; simulation.value = null; step.value = 'bundle'; notice.value = '已保存数值模型产物，并通过保存后推理检查。'
+  const baseId = baseBundleId.value
+  const addedTask = addedBundleTask.value
+  const result = await studioPost<Bundle>(`/projects/${projectId.value}/bundles`, {
+    title: bundleTitle.value, selections: Object.values(selections.value),
+    ...(baseId ? { baseBundleId: baseId } : {}),
+  })
+  await refreshProject()
+  if (disposed || result.projectId !== projectId.value) return
+  dashboardTask.value = result.manifest.some(item => item.task === addedTask) ? addedTask : undefined
+  if (baseId && baseBundleId.value === baseId) {
+    baseBundleId.value = result.id
+    addedBundleTask.value = undefined
+  }
+  bundleId.value = result.id; simulation.value = null; step.value = 'bundle'
+  notice.value = `已保存版本 ${result.version}，包含${result.manifest.map(item => labels[item.task]).join('、')}。`
 }) }
 function runSimulation() { void action(async () => {
   const id = bundleId.value
@@ -690,18 +850,24 @@ async function useRefittedBundle(next: Bundle, trained: Experiment) {
     bundles: [next, ...state.value.bundles.filter(item => item.id !== next.id)],
     experiments: [trained, ...state.value.experiments.filter(item => item.id !== trained.id)],
   }
+  dashboardTask.value = trained.config.task
   bundleId.value = next.id
   simulation.value = null
   step.value = 'bundle'
-  const temperature = next.manifest.find(item => item.task === 'temperature')
-  notice.value = temperature
-    ? `已应用 ${temperature.algorithmName}，提前 ${temperature.config.horizonMinutes} 分钟。独立测试平均相差 ${formatKilnReading(temperature.test.mae, '℃')}，综合温差 ${formatKilnReading(temperature.test.rmse, '℃')}。`
+  const applied = next.manifest.find(item => item.task === trained.config.task)
+  notice.value = applied
+    ? `已应用 ${applied.algorithmName}，提前 ${applied.config.horizonMinutes} 分钟。独立测试平均相差 ${formatKilnReading(applied.test.mae, applied.unit)}，综合温差 ${formatKilnReading(applied.test.rmse, applied.unit)}。`
     : '已应用新模型版本。'
   try {
     await refreshProject(project)
   } catch {
     if (projectId.value === project) notice.value += ' 模型已应用，历史列表可稍后刷新。'
   }
+}
+function openModelPackage() {
+  if (!bundle.value || !canOpenModelPackage.value) return
+  // 带上当前项目和已保存版本，导出页无需重新查找源模型。
+  void router.push({ path: '/model-package', query: { project: projectId.value, bundle: bundle.value.id } })
 }
 function exportBundle() { void action(async () => {
   const data = await studioGet<unknown>(`/bundles/${bundleId.value}/export`)
@@ -778,7 +944,7 @@ function applyCatalogVersion(item: CatalogVersion) {
   activeTemplate.value = item.key
   assumptionsAccepted.value = false
   calibrationExperimentId.value = null
-  selections.value = {}
+  if (!baseBundleId.value) selections.value = {}
   comparisonId.value = ''
   step.value = 'mechanism'
   catalogOpen.value = false
@@ -844,6 +1010,7 @@ watch([cursorFraction, temperatureOffset, bundleId], () => { simulation.value = 
 watch(datasetId, (value, old) => {
   if (value === old) return
   selections.value = {}; simulation.value = null; comparisonId.value = ''
+  baseBundleId.value = ''; addedBundleTask.value = undefined
   if (old && mechanism.value?.datasetId !== value && draft.value?.datasetId !== value) {
     catalogSelections.value = {}; catalogAlternatives.value = []
     for (const { key } of state.value?.parameterDefinitions ?? []) {
@@ -882,6 +1049,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
     <input ref="input" type="file" accept=".zip,.xls,.xlsx,.csv,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg" multiple hidden @change="onFiles" />
     <PageHeader title="窑炉机理与预测建模" description="从资料依据出发，构建机理、比较算法，并保存可以复现的模型版本。">
       <template #actions>
+        <RouterLink v-if="auth.isAdmin && validationRelease" class="btn" :to="{ path: '/algorithm-manage', query: { release: validationRelease, project: projectId, dataset: datasetId || undefined, libraryOrigin: route.query.libraryOrigin } }"><ArrowLeft :size="14" />返回算法验证</RouterLink>
         <button v-if="project" type="button" class="btn" @click="openKnowledge"><BookOpen :size="14" />知识库</button>
         <button v-if="!project || step !== 'mechanism'" type="button" class="btn" @click="openCatalog()"><BookOpen :size="14" />机理库<span v-if="pendingCatalogCount"> · {{ pendingCatalogCount }} 条待审核</span></button>
         <button class="btn" @click="showGuide = true"><Info :size="14" />演示讲解</button>
@@ -900,7 +1068,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
       <div v-if="project" class="flex gap-5 text-[11px] text-muted-foreground"><span>{{ summaryCounts.files }} 份文件</span><span>{{ fmt(summaryCounts.rows, 0) }} 行数据</span><span>{{ summaryCounts.experiments }} 次实验</span><span>{{ summaryCounts.versions }} 个机理版本</span></div>
     </div>
 
-    <nav v-if="project" class="step-nav" aria-label="建模流程"><button v-for="(item, i) in steps" :key="item.key" :class="{ active: !knowledgeOpen && step === item.key }" @click="knowledgeOpen = false; item.key === 'knowledge' ? refreshLibrary() : step = item.key"><span class="step-number">{{ i + 1 }}</span><span><strong>{{ item.title }}</strong><small>{{ item.subtitle }}</small></span><ChevronRight v-if="i < steps.length - 1" :size="13" class="step-chevron" /></button></nav>
+    <nav v-if="project" ref="workflowNav" class="step-nav" aria-label="建模流程"><button v-for="(item, i) in steps" :key="item.key" :class="{ active: !knowledgeOpen && step === item.key }" @click="knowledgeOpen = false; item.key === 'knowledge' ? refreshLibrary() : step = item.key"><span class="step-number">{{ i + 1 }}</span><span><strong>{{ item.title }}</strong><small>{{ item.subtitle }}</small></span><ChevronRight v-if="i < steps.length - 1" :size="13" class="step-chevron" /></button></nav>
 
     <div v-if="activeJob" class="job-bar" :class="{ failed: activeJob.status === 'failed' }">
       <Loader2 v-if="['queued', 'running'].includes(activeJob.status)" class="animate-spin" :size="15" /><Check v-else-if="activeJob.status === 'succeeded'" :size="15" /><Info v-else :size="15" />
@@ -954,7 +1122,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
 
           <KilnDataConfirmation v-else-if="step === 'data'" :key="project.id"
             :project="project" :files="dataFiles" :fields="state?.fields ?? []" :dataset="dataset"
-            :mapping-draft="state?.mappingDrafts[0]" :unexpanded-zip-count="unexpandedZips.length" :disabled="running"
+            :mapping-draft="state?.mappingDrafts[0]" :unexpanded-zip-count="unexpandedZips.length" :disabled="running" :saving="savingDataset"
             v-model:kiln-code="kilnCode" v-model:zone-count="zoneCount" v-model:burner-count="burnerCount"
             v-model:flow-confirmed="flowConfirmed" v-model:acknowledge="acknowledge"
             v-model:file-enabled="fileEnabled" v-model:use-standard="useStandard" v-model:mappings="mappings"
@@ -1245,9 +1413,48 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
           </template>
 
           <template v-else-if="step === 'bundle'">
-            <section v-if="state?.bundles.length" class="surface p-5"><label>已生成版本<select v-model="bundleId" class="control w-full mt-2"><option v-for="item in state.bundles" :key="item.id" :value="item.id">{{ item.title }} · {{ item.version }} · {{ time(item.createdAt) }}</option></select></label></section>
-            <KilnForecastDashboard v-if="bundle && state" :key="bundle.id" :bundle="bundle" :state="state" @updated="useRefittedBundle" />
-            <details class="surface p-5" :open="!bundle"><summary class="cursor-pointer font-semibold">组合生成模型版本</summary><p class="hint mt-2">可生成单任务或多任务模型。保存的产物包含训练权重、预处理器、机理参数和输入版本。</p><div class="selection-list"><article v-for="task in taskList" :key="task"><span>{{ labels[task] }}</span><strong>{{ selectionLabel(task) }}</strong><button v-if="selections[task]" @click="delete selections[task]" aria-label="移除此任务"><X :size="13" /></button></article></div><div class="flex gap-3"><input v-model="bundleTitle" class="control flex-1" maxlength="160" aria-label="模型版本名称" /><button class="btn primary" :disabled="running || !selectedCount" @click="build"><Save :size="14" />生成模型版本</button></div></details>
+            <section v-if="state?.bundles.length" class="surface p-5">
+              <div class="bundle-export-row">
+                <label class="bundle-version-field">已生成版本
+                  <select :value="bundleId" class="control w-full mt-2" :disabled="running"
+                    @change="selectBundle(($event.target as HTMLSelectElement).value)">
+                    <option v-for="item in state.bundles" :key="item.id" :value="item.id">{{ bundleOptionLabel(item) }}</option>
+                  </select>
+                </label>
+                <div class="bundle-export-actions">
+                  <button type="button" class="btn primary" :disabled="!bundle || !canOpenModelPackage" :title="canOpenModelPackage ? '导出当前已保存的模型版本' : '当前账号未开通模型封装导出菜单权限'" @click="openModelPackage"><Download :size="14" />模型封装导出</button>
+                  <p class="hint mt-2">{{ canOpenModelPackage ? 'ONNX 部署包 · JSON · AI Skill · Python' : '当前账号未开通导出页权限，请联系管理员。' }}</p>
+                </div>
+              </div>
+            </section>
+            <KilnForecastDashboard v-if="bundle && state" :key="bundle.id" :bundle="bundle" :state="state"
+              :initial-task="dashboardTask" @updated="useRefittedBundle" />
+            <details ref="bundleComposition" class="surface p-5" :open="!bundle || !!baseBundle">
+              <summary class="cursor-pointer font-semibold">组合生成模型版本</summary>
+              <p v-if="baseBundle" class="hint mt-2">
+                基于版本 {{ baseBundle.version }}<template v-if="addedBundleTask"> · 补充{{ labels[addedBundleTask] }}</template>
+                · 使用数据版本 {{ dataset?.title }}
+              </p>
+              <p v-else class="hint mt-2">可生成单任务或多任务模型。组合中的实验须使用同一数据版本。</p>
+              <button v-if="bundle && bundle.id !== baseBundleId" type="button" class="btn mt-2" :disabled="running" @click="inheritBundle">
+                带入当前版本 {{ bundle.version }} 的模型
+              </button>
+              <div class="selection-list">
+                <article v-for="task in taskList" :key="task">
+                  <span>{{ labels[task] }}</span><strong>{{ selectionLabel(task) }}</strong>
+                  <button v-if="selections[task]" type="button" :disabled="running" :aria-label="`移除${labels[task]}`"
+                    @click="delete selections[task]"><X :size="13" /></button>
+                  <button v-else-if="bundle && !bundle.manifest.some(model => model.task === task)" type="button"
+                    class="btn tiny" :disabled="running" :aria-label="`补充${labels[task]}`" @click="addBundleTask(task)">
+                    <Plus :size="13" />补充
+                  </button>
+                </article>
+              </div>
+              <div class="flex gap-3">
+                <input v-model="bundleTitle" class="control flex-1" maxlength="160" aria-label="模型版本名称" />
+                <button type="button" class="btn primary" :disabled="running || !selectedCount" @click="build"><Save :size="14" />生成模型版本</button>
+              </div>
+            </details>
             <template v-if="bundle"><details class="surface"><summary class="cursor-pointer px-5 py-4 font-semibold">模型清单与来源</summary><div class="section-head"><div><h2>{{ bundle.title }}</h2><p>版本 {{ bundle.version }} · {{ bundle.validationStatus }}</p></div><button class="btn tiny" :disabled="busy" @click="exportBundle"><Download :size="13" />导出数值模型</button></div><div class="p-5"><p class="hint">{{ bundle.dataFlow }}</p><article v-for="item in bundle.manifest" :key="item.task" class="manifest-row"><strong>{{ labels[item.task] }} · {{ item.algorithmName }}</strong><p>{{ item.config.horizonMinutes }}分钟 · {{ item.config.zone ? `${item.config.zone}区` : '总管 / 有效均温' }} · 机理 {{ item.mechanismVersion }}</p><p>{{ item.mechanismRole }} · 验证 MAE {{ formatKilnReading(item.validation.mae, item.unit) }}</p><small class="mono">数据 {{ item.dataHash.slice(0, 12) }} · 实验 {{ item.experimentId }}</small></article><p class="hint mono mt-4 break-all">产物 SHA256：{{ bundle.artifactHash }}</p></div></details>
 <details v-if="bundle.manifest.some(item => item.task !== 'temperature')" class="surface p-5"><summary class="cursor-pointer font-semibold">燃气与空燃比单点试算</summary><p class="hint mt-2">在最新时间的文件内选择预测起点。温度偏移仅用于有机理响应的温度/能耗模型，结果是工程假设下的试算。</p><div class="form-grid mt-4"><label class="span-2">回放位置 {{ fmt(cursorFraction * 100, 0) }}%<input v-model.number="cursorFraction" type="range" min="0.1" max="0.85" step="0.01" /></label><label>未来设定偏移 / ℃<input v-model.number="temperatureOffset" type="number" min="-100" max="100" class="control" /></label></div><div class="flex justify-end mt-4"><button class="btn primary" :disabled="running" @click="runSimulation"><Play :size="14" />按保存模型计算</button></div><div v-if="simulation" class="mt-5"><p class="hint">预测起点 {{ time(simulation.cursor) }} · 版本 {{ simulation.bundleVersion }}</p><div v-for="item in simulation.outputs.filter(output => output.task !== 'temperature')" :key="item.task" class="simulation-row"><div><strong>{{ labels[item.task] }}</strong><p>{{ item.note }}</p></div><div v-if="item.baseline != null" class="simulation-values"><span>原计划 <b>{{ fmt(item.baseline, kilnReadingDigits(item.unit)) }}</b></span><ArrowRight :size="15" /><span>调整后 <b>{{ fmt(item.adjusted, kilnReadingDigits(item.unit)) }}</b></span><small>{{ item.unit }} · {{ item.horizonMinutes }}min</small></div></div><p class="hint mt-3">{{ simulation.scope }}</p></div></details></template>
           </template>
@@ -1325,8 +1532,8 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
     </template>
 
     <KilnAlgorithmLibrary :open="algorithmLibraryOpen" :items="state?.algorithmLibrary ?? []" :selected="comparisonAlgorithmKeys"
-      :task-label="labels[config.task]" :has-task-mechanism="hasTaskMechanism" :disabled="running" :defaults="currentConfig"
-      @close="algorithmLibraryOpen = false" @toggle="toggleComparisonAlgorithm" @updated="updateAlgorithmLibrary" />
+      :task-label="labels[config.task]" :has-task-mechanism="hasTaskMechanism" :disabled="running" :defaults="currentConfig" :focus-key="algorithmLibraryFocus"
+      @close="algorithmLibraryOpen = false; algorithmLibraryFocus = ''" @manage="openAlgorithmManagement" @toggle="toggleComparisonAlgorithm" @updated="updateAlgorithmLibrary" @configure="configureAlgorithm" @refresh="refreshAlgorithmLibrary" />
     <KilnMechanismCatalog :open="catalogOpen" :compare-key="catalogCompareKey" :items="comparisonCatalog" :current="currentCatalog"
       :current-label="draft ? '本次资料生成 · 草稿' : mechanism ? '当前方案 · ' + mechanism.version : '本次配置'"
       :enabled-keys="templateKeys" :alternatives="catalogAlternatives" :has-dataset="!!dataset"
@@ -1387,4 +1594,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; clearTimeout(pollTimer)
 .algorithm-chip small { margin-left:6px; color:var(--muted-foreground); }
 .algorithm-chip button { display:inline-flex; padding:3px; cursor:pointer; border-radius:4px; }
 .algorithm-chip button:hover { background:var(--card); }
+.bundle-export-row { display:flex; align-items:flex-end; flex-wrap:wrap; gap:16px; }
+.bundle-version-field { flex:1 1 320px; min-width:0; }
+.bundle-export-actions { max-width:100%; }
 </style>

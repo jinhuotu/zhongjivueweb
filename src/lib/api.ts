@@ -43,6 +43,7 @@ type RequestOptions = {
   method?: string
   body?: unknown
   form?: FormData
+  binary?: Blob
   token?: string | null
   signal?: AbortSignal
   /** internal: already retried after token refresh */
@@ -76,11 +77,13 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const { method = 'GET', body, form, token, signal, _retry } = options
+  const { method = 'GET', body, form, binary, token, signal, _retry } = options
   const headers: Record<string, string> = {
     Accept: 'application/json',
   }
-  if (form === undefined && body !== undefined) {
+  if (binary) {
+    headers['Content-Type'] = binary.type || 'application/octet-stream'
+  } else if (form === undefined && body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
   if (token) {
@@ -92,7 +95,7 @@ export async function apiRequest<T>(
     res = await fetch(`${getApiBaseUrl()}${path}`, {
       method,
       headers,
-      body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
+      body: binary ?? form ?? (body === undefined ? undefined : JSON.stringify(body)),
       signal,
     })
   } catch (e) {
